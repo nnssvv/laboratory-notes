@@ -1,0 +1,581 @@
+---
+title: "Lab Week 4: Bias, Variance, Cross-Validation"
+author: "Instructor: Blake Miller"
+date: |
+  | `r format(Sys.time(), '%d %B %Y')`
+output: pdf_document
+---
+
+# Dr Brooke's Lab Answer Document 
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# Sets the starting number used to generate a sequence of random numbers
+# –  ensures that you get the same result each time.j
+set.seed(1)
+
+options(repr.plot.width=4, repr.plot.height=3)
+library(ggplot2)
+
+# User defined function for custom plot. 
+plot_decision_boundary <- function(train_x, train_y, pred_grid, grid) {
+  cl <- ifelse(train_y == 1, "Pos", "Neg")
+  
+  # Data structure for plotting
+  dataf <- data.frame(grid,
+                      prob = as.numeric(pred_grid), #prob = attr(pred_grid, "prob"),
+                      class = ifelse(pred_grid==2, "Pos", "Neg"))
+  
+  # Plot decision boundary
+  col <- c("#009E73", "#0072B2") # Hex color codes
+  plot <- ggplot(dataf) +
+    geom_raster(aes(x=x_1, y=x_2, fill=prob), alpha=.9,
+                 data=dataf) +
+    geom_point(aes(x=x_1, y=x_2, color=class),
+               size=1,
+               data=data.frame(x_1=train_x[,1], x_2=train_x[,2], class=cl)) +
+    geom_point(aes(x=x_1, y=x_2),
+               size=1, shape=1,
+               data=data.frame(x_1=train_x[,1], x_2=train_x[,2], class=cl)) + 
+    scale_colour_manual(values=col, name="Class") +
+    scale_fill_gradientn(colors=col[c(2,1)], limits=c(0,1), guide = FALSE) + 
+    xlab("Feature 1") + ylab("Feature 2")
+  
+  # Returns the plot
+  return(plot)
+}
+```
+
+# Coding practice
+
+The `if`, `else`, and `ifelse` statements
+
+```{r}
+# Boolean Evaluation
+condition_1 <- TRUE
+condition_2 <- FALSE
+
+
+# "if" statement (True triggers)
+if (condition_1) {
+  print("Execute code: True")
+}
+
+if (condition_2) {
+  print("Execute code: False")
+}
+
+# "If" & "else" combination (Replace print statements)
+# else is triggered when "if" condition isn't met.
+if (1 > 1) {
+  print("Execute code")
+} else {
+  print("Do something else")
+}
+
+# Else is skipped when "if" condition is met.
+if (1 >= 1) {
+  print("Execute code")
+} else {
+  print("Do something else")
+}
+
+# Conditional element selection 
+# ifelse(test to evaluate, yes (True), no (False))
+ifelse(1 >= 1, "Execute code", "Do something else")
+ifelse(1 > 1, "Execute code", "Do something else")
+```
+
+Randomly permuting a vector
+
+```{r}
+vec <- 1:50
+head(vec)
+
+# Takes a sample of a specified size from x
+# sample(x, size, with replacement?, probability?)
+#   Without replacement means sampled unit is removed from population.
+#   With replacement means a unit can be drawn from the population more than once.
+random_order <- sample(vec, size=length(vec))
+head(random_order)
+```
+
+Splitting a vector into smaller vectors of size n.
+
+```{r}
+n <- 50
+k <- 10
+
+# Vector of 1 to n (50)
+vec <- 1:n
+
+# for (element in vector) {
+#   Do something ...
+# }
+
+for (i in seq(0,n-k,k)) {
+  print(vec[(i+1):(i+k)])
+}
+
+?seq
+# seq(start, stop, step) 
+# In python, akin to range(start, stop, step)
+```
+
+# Citi Bike Example
+
+Below we will load in data from 2014 from New York City's Citi Bike cycle sharing service. This is similar to Santander Cycles (Boris bikes) here. We aim to predict the number of daily trips using a single variable: daily low temperature.
+
+```{r}
+# Read in csv
+tpd <- read.csv('trips_per_day.csv')
+# Eyeball
+head(tpd)
+```
+
+## Creating a training and test set
+
+Let's first start by dividing our data into a training and test set. Let's split it so that we have ~20% for training and ~80% for testing. (Note: Usually we want a larger training set so that we aren't throwing away so much of the data, but it is easier to demonstrate overfitting/bias/variance using a smaller training set.)
+
+```{r}
+# Get an integer corresponding to ~80%
+#   floor() returns the largest integer that is smaller than or equal to value passed to it as argument
+#   In this case it's number of rows (292) to ensure we get a whole number, and not 291.5 rows.
+N <- floor(.8*nrow(tpd))
+
+# Randomly sample N indexes corresponding to row index labels in data
+#   List of indexes of rows that will form the test set (80% of whole data set)
+test_idx <- sample(1:nrow(tpd), N)
+
+# Subset by row index
+#  Select rows by index selected by random sample
+tpd_test <- tpd[test_idx,]
+#  Select rows that aren't in sample
+tpd_train <- tpd[-test_idx,]
+```
+
+## Examining models of different levels of flexibility
+
+We can start by looking at the relationship between our one feature, `tmin` and our outcome variable `num_trips`.
+
+```{r}
+# First stage is to plot as "eyeball" the relationship
+plot(tpd$tmin, tpd$num_trips, xlab="Minimum Temp.", ylab="Number of Trips")
+```
+
+The relationship looks somewhat linear, so we might be able to get away with a simple OLS model. Lets visually inspect how well an OLS regression line will fit these data.
+
+```{r}
+
+# Curly brackets are used to group statements into one expression.
+# it will run without, but the correct syntax is to group them.
+#  Below, abline() adds a straight line through the plot that is generated
+#  by OLM (minimizing sum of squares)
+{
+  ols_mod <- lm(num_trips ~ tmin, data=tpd_train)
+  plot(tpd_train$tmin, tpd_train$num_trips, xlab="Minimum Temp.", ylab="Number of Trips")
+  
+  ## Plot linear function
+  abline(ols_mod, col='red')
+}
+```
+
+It looks pretty good, but what if we fit it with a degree 3 polynomial instead?
+
+```{r}
+# A degree three (cubic, largest exponent/power) polynomial is a line where two curves are permitted.
+# Linear model with poly.
+
+# 'Raw' polynomials are possible with raw = TRUE. They give the
+# same fit, but the coefficient estimates are different.
+#  Any two polys are orthogonal if their dot product is 0.
+
+{
+  poly3_mod <- lm(num_trips ~ poly(tmin, 3, raw = T), data = tpd_train)
+  plot(tpd_train$tmin, tpd_train$num_trips, xlab="Minimum Temp.", ylab="Number of Trips")
+  
+  ## Plot linear function
+  abline(ols_mod, col='red')
+  
+  ## Plot 3-degree polynomial function
+  #     length.out is the same as length. R allows "partial matching"
+  #     meaning you can abbreviate names of arguments.
+  x <- seq(min(tpd$tmin), max(tpd$tmin), length.out=2000)
+  y <- predict(poly3_mod, newdata = data.frame(tmin = x))
+  
+  # lines draws a not straight line (unlike abline)
+  lines(x, y, col = "blue")
+}
+```
+
+Visually, this looks like a good fit as well. What if we fit this with a degree 10 polynomial?
+
+```{r}
+
+{
+  poly10_mod <- lm(num_trips ~ poly(tmin, 10, raw = T), data=tpd_train)
+  plot(tpd_train$tmin, tpd_train$num_trips, xlab="Minimum Temp.", ylab="Number of Trips")
+  
+  ## Plot linear function
+  abline(ols_mod, col='red')
+  
+  ## Plot 3-degree polynomial function
+  x <- seq(min(tpd$tmin), max(tpd$tmin), length.out=2000)
+  y <- predict(poly3_mod, newdata = data.frame(tmin = x))
+  lines(x, y, col = "blue")
+  
+  ## Plot 10-degree polynomial function
+  x <- seq(min(tpd$tmin), max(tpd$tmin), length.out=2000)
+  y <- predict(poly10_mod, newdata = data.frame(tmin = x))
+  lines(x, y, col = "green")
+}
+
+## What is a potential problem with using higher degree polynomials?
+# Overfitting, what does this mean?
+```
+
+Lets evaluate how well the model fits the training data. Because this is a regression problem, we can use mean squared error. Recall that $MSE_{Tr} = Ave_{i \in Tr} [y_i - \hat{f}(x_i)]^2$ and that a better fit will have a smaller MSE:
+
+```{r}
+# MSE measures the average of the squares of the errors—that is, 
+# the average squared difference between the estimated values and the actual value.
+
+sqrt(mean((predict(ols_mod, tpd_train) - tpd_train$num_trips)^2))
+sqrt(mean((predict(poly3_mod, tpd_train) - tpd_train$num_trips)^2))
+sqrt(mean((predict(poly10_mod, tpd_train) - tpd_train$num_trips)^2))
+```
+
+It appears that the degree 10 polynomial is fitting the data best, but does this mean that it is the best model? Can this model generalize well to new data? Let's estimate generalization error using our test set.
+
+```{r}
+sqrt(mean((predict(ols_mod, tpd_test) - tpd_test$num_trips)^2))
+sqrt(mean((predict(poly3_mod, tpd_test) - tpd_test$num_trips)^2))
+sqrt(mean((predict(poly10_mod, tpd_test) - tpd_test$num_trips)^2))
+```
+```{r}
+## What is "bias"? What problem can be caused by bias?
+#    Bias is the accuracy of our predictions.
+#    A high bias means the prediction will be inaccurate. Intuitively, bias can be thought as having a ‘bias’ towards people. 
+#    If you are highly biased, you are more likely to make wrong assumptions about them. 
+#    An oversimplified mindset creates an unjust dynamic: you label them accordingly to a ‘bias.’
+
+# “Bias is the algorithm’s tendency to consistently learn the wrong thing by not taking into account all the information in the data (underfitting).”
+
+## What is "variance"? What problem can be cause by variance?
+#    Variance is the difference between many model’s predictions.
+#    Any ‘noise’ in the dataset, might be captured by the model. 
+#    A high variance tends to occur when we use complicated models that can overfit our training sets. 
+#    For example, a variance can be thought as having different stereotypes based on different demographics.
+
+# “Variance is an error from sensitivity to small fluctuations in the training set. High variance can cause an algorithm to model the random noise in the training data, rather than the intended outputs (overfitting).”
+
+```
+
+If we look at the three models superimposed on a scatterplot of the test observations it becomes visually apparent that the 10-degree polynomial was **overfitting**. In other words, this model was **high variance**. The function approximated by this more flexible model is highly dependent on the data used to train it. Note that the functional form was much more wiggly where we had little training observations. Because we did not have much information for colder minimum temperatures in our training set, our 10-order polynomial's predictions are way off. This is what is meant by a **high variance model**. The variance of the functional form is much higher with different data inputs. A **biased, but low variance** model like **OLS** will result in a functional form that does not vary much with different data while a **polynomial regression** model will.
+
+However, the OLS mode slightly **underfits** the data and does not appear to capture the true underlying functional form. Based on our visual inspection of the data, it appears that the **true relationship** is much more likely to be a **slight curve**. As the min temperature increases, the number of trips does not increase linearly. After a certain temperature the number of rides does not increase as much as it did at lower temperatures. It instead levels off. Because our model will never fully approximate the true non-linear function, it is **biased**.
+
+```{r}
+{
+  plot(tpd_test$tmin, tpd_test$num_trips, xlab="Minimum Temp.", ylab="Number of Trips")
+  
+  ## Plot linear function
+  abline(ols_mod, col='red')
+  
+  ## Plot 3-degree polynomial function
+  x <- seq(min(tpd$tmin), max(tpd$tmin), length.out=2000)
+  y <- predict(poly3_mod, newdata = data.frame(tmin = x))
+  lines(x, y, col = "blue")
+  
+  ## Plot 10-degree polynomial function
+  x <- seq(min(tpd$tmin), max(tpd$tmin), length.out=2000)
+  y <- predict(poly10_mod, newdata = data.frame(tmin = x))
+  lines(x, y, col = "green")
+}
+```
+
+## Classification of Simulated Data
+
+To illustrate the bias/variance tradeoff in a classification setting, we will classify two artificial datasets from the `mlbench` package. Each has two features and two classes to make visualizing our results easier.
+
+```{r}
+# We use artificial datasets to understand how a algorithm works.
+# In the real world, data is a lot messier and has a lot more noise.
+
+#install.packages("mlbench")
+library(mlbench)
+
+norm <- mlbench.2dnormals(1000, 2)
+plot(norm)
+
+spirals <- mlbench.spirals(1000, 1.5, 0.1)
+plot(spirals)
+```
+
+We can begin by dividing our datasets into training and test sets. We'll randomly sample 20% for test set.
+
+```{r}
+
+# In reality, 20% is the standard portion of our data that we would use for testing. 
+# Including in any application of the ML models you create.
+# We used 80% earlier for a effective demonstration of bias/varience. 
+
+# Package for various classification models, including KNN
+library(class)
+
+# norm is 2-dimensional Gaussian (multivariate normal distribution).
+# in using "$" we are access the 2d matrix in the list "norm" from the class package.
+str(norm)
+
+# Values of datapoints - 2d (x,y)
+norm_x <- norm$x
+spirals_x <- spirals$x
+
+# Classes (classification output) based on datapoints (1, 2)
+norm_y <- norm$classes
+spirals_y <- spirals$classes
+
+# 200 values randomly selected from 1 to 1000 (i.e. 20%)
+# indexes for test data
+test_idx <- sample(1:1000, 200)
+
+## Spiral data (train/test)
+# "-" selects all not in lisrt of indexes
+spirals_x_train <- spirals_x[-test_idx,]
+spirals_x_test <- spirals_x[test_idx,]
+
+spirals_y_train <- spirals_y[-test_idx]
+spirals_y_test <- spirals_y[test_idx]
+
+## 2 Normal distributions (train/test)
+
+norm_x_train <- norm_x[-test_idx,]
+norm_x_test <- norm_x[test_idx,]
+
+norm_y_train <- norm_y[-test_idx]
+norm_y_test <- norm_y[test_idx]
+```
+
+Now let's try classifying the spiral dataset using KNN and logistic regression.
+
+```{r}
+## ASK: What is logistic regression?
+#   Logistic regression is used to obtain odds ratio in the presence of more than one explanatory variable. 
+#   The procedure is quite similar to multiple linear regression, with the exception that the response variable is binomial. 
+#   The result is the impact of each variable on the odds ratio of the observed event of interest.
+
+## ASK: What is KNN?
+#  A supervised machine learning algorithm.
+#  The KNN algorithm assumes that similar things exist in close proximity. In other words, similar things are near to each other.
+#  KNN works by finding the distances between a query and all the examples in the data, 
+#  the specified number examples (K) closest to the query, then votes for the most frequent label (in the case of classification) 
+#  or averages the labels (in the case of regression).
+```
+
+
+```{r, fig.height=3}
+library(class)
+
+# Here, we can use the plot_decision_boundary function we created earlier.
+# This expand.grid" is a useful function for generating tables of combinations of factor levels.
+
+# Create a prediction grid so we can plot the predicted decision boundary 
+# x_1 and x_2: vectors of min to max of training data.
+# "grid" is a dataframe of all combinations of x_1 and x_2
+print(grid)
+
+grid <- expand.grid(x_1=seq(min(spirals_x_train[,1]-1), max(spirals_x_train[,1]+1), by=0.05),
+                       x_2=seq(min(spirals_x_train[,2]-1), max(spirals_x_train[,2]+1), by=0.05))
+
+# K = 1
+# knn(train, test (row vector is observation), factor of true classifications of training set)
+pred_grid <- as.numeric(knn(spirals_x_train, grid, spirals_y_train, k = 1, prob=TRUE)) - 1
+plot_decision_boundary(spirals_x_train, spirals_y_train, pred_grid, grid)
+
+# K = 15
+
+pred_grid <- as.numeric(knn(spirals_x_train, grid, spirals_y_train, k = 15, prob=TRUE)) - 1
+plot_decision_boundary(spirals_x_train, spirals_y_train, pred_grid, grid)
+
+# K = 100
+# If you increase k, the areas predicting each class will be more "smoothed", 
+# since it's the majority of the k-nearest neighbors which decide the class of any point.
+
+pred_grid <- as.numeric(knn(spirals_x_train, grid, spirals_y_train, k = 100, prob=TRUE)) - 1
+plot_decision_boundary(spirals_x_train, spirals_y_train, pred_grid, grid)
+
+
+## General Linear Model
+# We can see the values of the spirals data set here.
+# in glm a description of the error distribution and link function to be used in the model. 
+# A glm with family set to binomial is a logit model.
+
+dat <- data.frame(
+  y = as.numeric(spirals_y_train) - 1,
+  x_1 = spirals_x_train[,1],
+  x_2 = spirals_x_train[,2]
+)
+
+mod_1 <- glm(y ~ x_1 + x_2, data = dat, family=binomial)
+probs <- predict(mod_1, grid, type="response")
+pred_grid <- as.numeric(probs > .5)
+plot_decision_boundary(spirals_x_train, spirals_y_train, pred_grid, grid)
+```
+
+Now let's try classifying the 2 normal distributions dataset using KNN and logistic regression.
+
+```{r, fig.height=3}
+# Normal distribution is the norm data set.
+
+# Create a prediction grid so we can plot the predicted decision boundary 
+grid <- expand.grid(x_1=seq(min(norm_x_train[,1]-1), max(norm_x_train[,1]+1), by=0.05),
+                       x_2=seq(min(norm_x_train[,2]-1), max(norm_x_train[,2]+1), by=0.05))
+
+# K = 1
+
+y_pred1 <- knn(norm_x_train, norm_x_test, norm_y_train, k = 1, prob=TRUE)
+pred_grid <- as.numeric(knn(norm_x_train, grid, norm_y_train, k = 1, prob=TRUE)) - 1
+plot_decision_boundary(norm_x_train, norm_y_train, pred_grid, grid)
+
+# K = 15
+
+y_pred15 <- knn(norm_x_train, norm_x_test, norm_y_train, k = 15, prob=TRUE)
+pred_grid <- as.numeric(knn(norm_x_train, grid, norm_y_train, k = 15, prob=TRUE)) - 1
+plot_decision_boundary(norm_x_train, norm_y_train, pred_grid, grid)
+
+# K = 100
+
+y_pred100 <- knn(norm_x_train, norm_x_test, norm_y_train, k = 100, prob=TRUE)
+pred_grid <- as.numeric(knn(norm_x_train, grid, norm_y_train, k = 100, prob=TRUE)) - 1
+plot_decision_boundary(norm_x_train, norm_y_train, pred_grid, grid)
+
+# Logistic regression
+
+train <- data.frame(
+  # y is the binary class (response variable, not axis)
+  y = as.numeric(norm_y_train) - 1,
+  # datapoints/observations.
+  x_1 = norm_x_train[,1],
+  x_2 = norm_x_train[,2]
+)
+
+test <- data.frame(
+  y = as.numeric(norm_y_test) - 1,
+  x_1 = norm_x_test[,1],
+  x_2 = norm_x_test[,2]
+)
+
+# We can input the column names directly into the equation. 
+# Note that the response variable (y) is on the left.
+# data is the name of the dataframe
+
+# Logistic model
+mod_1 <- glm(y ~ x_1 + x_2, data = train, family=binomial)
+
+# ifelse returns True/False
+#   if type="response" we get the predictive probability (the likelihood that y = 2)
+#   This statement returns the predicted classification based on the value of the predicted probability
+y_pred_lr <- ifelse(predict(mod_1, test, type="response") > .5, 2, 1)
+
+# Get predicted probability on grid (2d normal dist data) using mod_1 (logistic model)
+probs <- predict(mod_1, grid, type="response")
+pred_grid <- as.numeric(probs > .5)
+
+# function we created earlier
+plot_decision_boundary(norm_x_train, norm_y_train, pred_grid, grid)
+```
+
+Below we evaluate test error for each model and display the confusion matrix.
+
+```{r}
+
+# True Pos, False Pos,
+# False Neg, True Neg
+
+# K = 1
+table(y_pred1, norm_y_test)
+mean(y_pred1 != norm_y_test)
+
+# K = 15
+table(y_pred15, norm_y_test)
+mean(y_pred15 != norm_y_test)
+
+# K = 100
+table(y_pred100, norm_y_test)
+mean(y_pred100 != norm_y_test)
+
+# Logistic Regression
+table(y_pred_lr, norm_y_test)
+
+# Misclassification rate
+mean(y_pred_lr != norm_y_test)
+```
+
+## ISLR Lab: Leave one out cross-validation
+
+```{r}
+library(ISLR)
+require(boot)
+
+# model of miles per gallon 
+plot(mpg ~ horsepower, data=Auto)
+
+# fitting a linear model, if no family provided, default to linear model
+mod <- glm(mpg ~ horsepower, data=Auto)
+coef(mod)
+
+# this model will be the same
+mod.lm <- lm(mpg ~ horsepower, data=Auto)
+coef(mod.lm)
+
+
+# leave one out cross-validation (built in function)
+?cv.glm
+
+cv.err <- cv.glm(Auto, mod)
+
+# delta gives the cross validated prediction error
+# First item: raw LOOCV error (Leave One Out Cross Validation)
+# Second item: bias corrected LOOCV error
+# Added bias is due to smaller dataset used to fit
+cv.err$delta
+
+# vector of 0s repeated 5 times
+cv.error <- rep(0,5)
+
+degree <- 1:5
+for (d in degree){
+  mod <- glm(mpg ~ poly(horsepower, d), data=Auto)
+  # store errors in vector cv.error
+  cv.error[d] <- cv.glm(Auto, mod)$delta[1]
+}
+cv.error
+
+# Appears quadratic does well, higher-degree polynomials do not really improve the fit
+plot(degree, cv.error, type='b')
+```
+
+## ISLR Lab: K-fold cross-validation
+
+```{r}
+set.seed(1)
+
+# store errors in a vector
+cv.error.10 <- rep(0,5)
+
+degree <- 1:5
+for (d in degree){
+  # polynomial by using the poly function (orthogonal)
+  mod <- glm(mpg ~ poly(horsepower, d), data=Auto)
+  # K argument tells the number of folds
+  cv.error.10[d] <- cv.glm(Auto, mod, K=10)$delta[1]
+}
+
+cv.error.10
+{
+  plot(degree, cv.error, type='b')
+  lines(degree, cv.error.10, type='b', col='red')
+}
+```
