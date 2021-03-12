@@ -1,0 +1,201 @@
+---
+title: "Lab 03: Answers to Labatory Exercises"
+author: "Sian Brooke"
+date: "01/03/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Chapter 6 Exercises
+
+8. In this exercise, we will generate simulated data, and will then use this data to perform best subset selection.
+
+(a) Use the `rnorm()` function to generate a predictor $X$ of length $n = 100$, as well as a noise vector $\varepsilon$ of length $n = 100$.
+
+```{r}
+# Reproduce random
+set.seed(1)
+
+# Set values
+x <- rnorm(100)
+error <- rnorm(100)
+```
+
+(b) Generate a response vector $Y$ of length $n = 100$ according to the model
+$$Y = \beta_0 +\beta_1X +\beta_2X^2 +\beta_3X^3 +\varepsilon,$$
+where $\beta_0, \beta_1, \beta_2$, and $\beta_3$ are constants of your choice.
+
+```{r}
+
+b0 <- 2
+b1 <- 3
+b2 <- (-4)
+b3 <- 0.5
+
+y <- b0 + b1 * x + b2 * x^2 + b3 * x^3 + error
+```
+
+(e) Fit a lasso model to the simulated data, using $X,X^2, \dots, X^{10}$ as predictors. Use cross-validation to select the optimal value of $\lambda$. Create plots of the cross-validation error as a function of $\lambda$. Report the resulting coefficient estimates, and discuss the results obtained.
+
+```{r}
+library(glmnet)
+set.seed(1)
+
+# I() change the class of an object to indicate that it should be treated ‘as is’
+# In formula it is used to inhibit operators (such as "-") as formula operators.
+x.matrix <- model.matrix(y ~ x + I(x^2) + I(x^3) + I(x^4) + I(x^5) 
+                         + I(x^6) + I(x^7) + I(x^8) + I(x^9) + I(x^10), 
+                         data = data.frame(y = y, x = x))[,-1] # Remove intercept
+# Equivalent to:
+# Raw = T means that we are not working with orthogonal 
+# x.matrix = model.matrix(y ~ poly(x, 10, raw = T), data = data.frame(y = y, x = x))[, -1]
+
+# CV Lasso model.
+cv.lasso <- cv.glmnet(x.matrix, y, alpha=1)
+# Plot MSE and for values of lambda.
+plot(cv.lasso)
+
+# Value of lambda that gives the minimum mean cross-validated error.
+# NOTE: lambda.se1 gives the most regularized model such 
+# that error is within one standard error of the minimum
+best.lambda <- cv.lasso$lambda.min
+best.lambda
+
+# Fit the model on entire data using best lambda
+fit.lasso <- glmnet(x.matrix, y, alpha = 1)
+predict(fit.lasso, s = best.lambda, type = "coefficients")
+
+# After performing cross validation we get λ as 0.03894 for minimum MSE.
+# We use this value of lambda to fit lasso regression
+# We obtain the coefficient estimates as above. Rest coefficients are reduced to 0.
+
+```
+
+(f) Now generate a response vector $Y$ according to the model
+$$Y = \beta_0 + \beta_7X^7 + \varepsilon,$$
+and perform the lasso. Discuss the results obtained.
+
+```{r}
+set.seed(1)
+
+# New Y with different beta7
+b7 <- 7
+y <- b0 + b7 * x^7 + error 
+
+# Expand factors to a set of dummy variables, drop intercept
+x.matrix <- model.matrix(y ~ x + I(x^2) + I(x^3) + I(x^4) + I(x^5) 
+                         + I(x^6) + I(x^7) + I(x^8) + I(x^9) + I(x^10), 
+                         data = data.frame(x,y))[, -1]
+# Lasso model
+cv.lasso <- cv.glmnet(x.matrix, y, alpha = 1)
+# Best value of lambda (minimum mean cross-validated error)
+best.lambda <- cv.lasso$lambda.min
+best.lambda
+
+# Fit a generalized linear model via Lasso.
+fit.lasso <- glmnet(x.matrix, y, alpha = 1)
+
+# Here the Lasso also chooses the best model with one variable
+predict(fit.lasso, s = best.lambda, type = "coefficients")
+```
+
+9. In this exercise, we will predict the number of applications received using the other variables in the `College` data set.
+
+(a) Split the data set into a training set and a test set.
+
+```{r, warning=FALSE, message=FALSE}
+
+library(ISLR)
+attach(College)
+
+set.seed(11)
+# Check for Null values
+sum(is.na(College))
+
+
+#Randomly splitting data into training and test set in 8:2
+tr <- sample(nrow(College), nrow(College)*0.8)
+
+# Train and test data.
+Coll.train <- College[tr,]
+Coll.test <- College[-tr,]
+
+```
+
+(b) Fit a linear model using least squares on the training set, and report the test error obtained.
+
+```{r}
+# Linear model
+College.fit <- lm(Apps ~ ., data = Coll.train)
+
+# Predict number of applications
+College.pred <- predict(College.fit, Coll.test)
+
+# Test (generalization) error
+College.testerror <- mean((Coll.test[, "Apps"] - College.pred)^2)
+College.testerror
+
+```
+
+(c) Fit a ridge regression model on the training set, with $\lambda$ chosen by cross-validation. Report the test error obtained.
+
+```{r}
+## Pick λ using Coll.train and report error on Coll.test
+library(glmnet)
+
+# Create (dummy) matrix for training set and test set
+train.matrix <- model.matrix(Apps ~ ., data = Coll.train)
+test.matrix <- model.matrix(Apps ~ ., data = Coll.test)
+
+## Defining grid to covering all the range of lambda.
+# This will be used to find best value of lambda
+# Log grid is the best method
+lambda.grid <- 10 ^ seq(4,-2,length = 100)
+
+## NOTE: Technically, you don’t need to specify a grid of lambdas.
+# cv.glm has its own built-in lambda search algorithm
+
+## Fitting the ridge regression model.
+# Goes through different values of lambda from grid.
+# Setting alpha = 0 is ridge model.
+College.cv.ridge <- cv.glmnet(train.matrix, Coll.train[, "Apps"],
+                      alpha = 0,lambda = lambda.grid)
+
+# Finding the lambda for which CV error is minimum on training data
+lambda.best <- College.cv.ridge$lambda.min
+lambda.best
+
+# Predict using CV ridge model and get the test error
+ridge.pred <- predict(College.cv.ridge, newx = test.matrix, s = lambda.best)
+ridge.test.error <- mean((Coll.test[, "Apps"] - ridge.pred)^2)
+ridge.test.error
+```
+
+(d) Fit a lasso model on the training set, with $\lambda$ chosen by cross-validation. Report the test error obtained, along with the number of non-zero coefficient estimates.
+
+```{r}
+# CV Lasso model
+College.cv.lasso <- cv.glmnet(train.matrix, Coll.train[, "Apps"],
+                       alpha = 1, lambda = lambda.grid)
+
+# Best value of lambda (minimum mean cross-validated error.
+lambda.best <- College.cv.lasso$lambda.min
+lambda.best
+
+# Using the lambda value obtained from cross validation for 
+# the lasso model directly on test data set to get the predicted values.
+lasso.pred <- predict(College.cv.lasso, newx = test.matrix, s = lambda.best)
+lasso.test.error <- mean((Coll.test[, "Apps"] - lasso.pred)^2)
+lasso.test.error
+
+# Get the coefficients
+College.mod.lasso <- glmnet(model.matrix(Apps ~ ., data = College), College[, "Apps"], alpha = 1)
+predict(College.mod.lasso, s = lambda.best, type = "coefficients")
+```
+
+
+(g) Comment on the results obtained. How accurately can we predict the number of college applications received? Is there much difference among the test errors resulting from these two approaches?
+

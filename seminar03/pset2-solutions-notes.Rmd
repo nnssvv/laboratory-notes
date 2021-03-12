@@ -1,0 +1,449 @@
+---
+title: "Problem Set 2 Solutions: Bias, Variance, Cross-Validation"
+author: "<CANDIDATE NUMBER HERE>"
+date: |
+  | `r format(Sys.time(), '%d %B %Y')`
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Ensures random number generation is the same every time.
+set.seed(1)
+
+# Set global options in the way R displays plots.
+options(repr.plot.width=4, repr.plot.height=3)
+library(ggplot2)
+library(ISLR)
+library(class)
+library(boot)
+library(mlbench)
+
+# Custom function for plotting
+plot_decision_boundary <- function(train_x, train_y, pred_grid, grid) {
+  cl <- ifelse(train_y == 1, "Pos", "Neg")
+  
+  ## Data structure for plotting
+  dataf <- data.frame(grid,
+                      prob = abs(as.numeric(pred_grid) - 1), #prob = attr(pred_grid, "prob"),
+                      class = ifelse(pred_grid == 1, "Pos", "Neg"))
+  
+  ## Plot decision boundary
+  
+  col <- c("#0072B2", "#009E73") # Hex color codes
+  plot <- ggplot(dataf) +
+    geom_raster(aes(x=x_1, y=x_2, fill=prob), alpha=.9,
+                 data=dataf) +
+    geom_point(aes(x=x_1, y=x_2, color=class),
+               size=1,
+               data=data.frame(x_1=train_x[,1], x_2=train_x[,2], class=cl)) +
+    geom_point(aes(x=x_1, y=x_2),
+               size=1, shape=1,
+               data=data.frame(x_1=train_x[,1], x_2=train_x[,2], class=cl)) + 
+    scale_colour_manual(values=col, name="Class") +
+    scale_fill_gradientn(colors=col[c(2,1)], limits=c(0,1), guide = FALSE) + 
+    xlab("Feature 1") + ylab("Feature 2")
+  return(plot)
+}
+```
+
+## 1. ISLR Chapter 5 Exercise 8
+
+a. We will now perform cross-validation on a simulated data set. In this data set, what is $n$ and what is $p$? Write out the model used to generate the data in equation form.
+
+```{r}
+# Ensures random number generation is the same every time.
+set.seed(1)
+
+# 100 observations, normally distributed.
+x <- rnorm(100)
+# Created as directly specified in ISLR
+y <- x - 2 * x^2 + rnorm(100)
+```
+
+b. Create a scatterplot of $X$ against $Y$. Comment on what you find.
+
+```{r}
+# simple scatter plot using inbuilt function
+plot(x,y)
+```
+
+The data are non-linear and appear to be quadratic, with an inverted U-shape curve.
+
+c. Set a random seed, and then compute the LOOCV errors that result from fitting the following four models using least squares:
+
+- $Y = \beta_0 + \beta_1X + \varepsilon$
+- $Y = \beta_0 + \beta_1X + \beta_2X^2 + \varepsilon$
+- $Y = \beta_0 +\beta_1X +\beta_2X^2 +\beta_3X^3 + \varepsilon$
+- $Y = \beta_0 +\beta_1X +\beta_2X^2 +\beta_3X^3 +\beta_4X^4 + \varepsilon.$
+
+Note you may find it helpful to use the \texttt{data.frame()} function to create a single data set containing both $X$ and $Y$.
+
+```{r}
+# Create a data frame from our vectors
+df <- data.frame(x, y)
+
+# Create numeric vector of 0's length of 4
+cv_error <- numeric(4)
+
+## NOTE: Setting raw=True means that we are using raw (not orthogonal polys)
+# As all we are really interested in is the fitted curve (and not the coefficients)
+# then what basis we use is irrelevant.
+
+# For number in 1-4:
+for (i in 1:4) {
+  # Build polynomial model where degree = number
+  mod <- glm(y ~ poly(x, i, raw=TRUE))
+  # Add cross-validated prediction error to cv_error vector,
+  # at index represented by number.
+  cv_error[i] <- cv.glm(df, mod)$delta[1]
+}
+
+cv_error
+```
+
+d. Repeat (c) using another random seed, and report your results.
+Are your results the same as what you got in (c)? Why?
+
+```{r}
+# Will generate different random sequence, but still replaceable
+# (Not commented as it's the same code.)
+set.seed(2)
+
+df <- data.frame(x, y)
+
+cv_error <- numeric(4)
+
+for (i in 1:4) {
+  mod <- glm(y ~ poly(x, i, raw=TRUE))
+  cv_error[i] <- cv.glm(df, mod)$delta[1]
+}
+
+cv_error
+```
+
+LOOCV is equivalent to n-fold cross-validation. Given the same dataset the set of possible splits will always be the same since each observation is used as a validation set once. This means that there is no randomness in the splits. Changing the random seed results in the exact same outcome because of this deterministic property of LOOCV. By contrast, in most cases (it is technically possible, but highly unlikely to randomly split a dataset in the same way twice), k-fold cross-validation where $k < n$ will be slightly different with a new random seed because the splits are random.
+
+e. Which of the models in (c) had the smallest LOOCV error? Is this what you expected? Explain your answer.
+
+```{r}
+# Returns the index of the minimum value in a vector
+# If there are multiple instances of a minimum, 
+# then returns the first instance.
+min <- which.min(cv_error)
+min
+
+cv_error[min]
+
+# In this case, the index is the degree of polynomial.
+```
+
+LOOCV error was minimized in the quadratic (2 degree of polynomial) model. This is expected because we know the true relationship between x and y: the equation that generated the data in part a) is quadratic.
+
+f. Comment on the statistical significance of the coefficient estimates that results from fitting each of the models in (c) using least squares. Do these results agree with the conclusions drawn based on the cross-validation results?
+
+```{r}
+# Loop to go through polynomial degrees,
+# and show the summary.
+for (d in 1:4) {
+  mod <- glm(y ~ poly(x, d), data=df)
+  summary(mod)
+}
+
+
+```
+
+As expected, only the linear and quadratic terms are the only terms with statistically significant coefficients. According to metrics presented in regression tables, the quadratic model provides the best fit. This is consistent with the data generating process, which was quadratic. These results agree with the CV error results, which demonstrate that the best model is a 2-degree polynomial model.
+
+## 2. 10-fold CV using random dataset
+
+Below is a dataset generated by adding gaussian noise to a pre-defined function. The true function is plotted in red.
+```{r}
+# Because we are generating random data, set a random seed
+set.seed(1)
+
+# Generate values in x spread evenly (0.05) from 0 to 20
+x <- seq(from=0, to=20, by=0.05)
+
+# Generate y according to the following known function of x
+y <- 500 + 0.4 * (x-10)^3
+
+# Add random noise to y using normal distribution
+# Which is the same length as x etc.
+noise <- rnorm(length(x), mean=10, sd=80)
+noisy.y <- y + noise
+
+## Plot data
+# Red line for true underlying function generating y
+# draws a smooth line through the data, 
+# without noise - joining together the dots.
+# Curly brackets is the correct syntax the group together.
+{
+  plot(x,noisy.y)
+  lines(x, y, col='red')
+}
+```
+
+a. With predictor `x` and outcome `noisy_y`, split the data into a training and test set.
+
+```{r}
+# 20% of the X vector floor ensures it's a whole number,
+# otherwise we'd be looking for 80.2 observations
+split <- floor(.2 * length(x))
+
+# Get indexes to use in test data,
+# 80 randomly selected numbers between 1 and the length of x
+test_idx <- sample(1:length(x), split)
+
+# Data set of noisy data (jittered) and X
+data <- data.frame(noisy.y, x)
+
+# Train data set (reverse index look up) - 80%
+train_data <- data[-test_idx, ]
+# Test data set - 20%
+test_data <- data[test_idx, ]
+```
+
+b. Perform 10-fold CV for polynomials from degree 1 to 5 (use MSE as your error measure). This should be done from scratch using a for loop. *(Hint: It may be helpful to randomly permute and then split the training set from the previous section into 10 evenly sized parts. You may need an if statement to handle a potential problem in the last iteration of your loop.)*
+
+```{r}
+set.seed(1)
+
+# Shuffle the training data.
+# nrow is the number of rows (observations) in the data (not subseting here)
+rows <- sample(1:nrow(train_data), nrow(train_data))
+
+# Rearranged based on index
+train_data <- train_data[rows, ]
+
+# Number of elements (32, 10th) for each fold (sub-testing set)
+N <- floor((1 / 10) * nrow(train_data))
+
+# Vector of 5x 0s
+cv_errors <- numeric(5)
+
+# For number_1 in 1-5 (poly degree):
+for (d in 1:5) {
+  # Vector of 10x 0s
+  fold_errors <- numeric(10)
+  # For number_2 in 1-10 (fold in LOOCV):
+  for (i in 1:10) {
+    # While number_2 is less than 10:
+    if (i < 10){
+      # Indexes in 10th segments (i.e. 1-32, 33-64, etc.)
+      val_idx <- ((N * (i - 1) + 1):(N * i))
+    }
+    # When number_2 = 10 (last fold in LOOCV)
+    else {
+      # Last 33 digits (odd number of obs, so final need +1)
+      # to the end of the data.
+      val_idx <- ((N * (i - 1) + 1):nrow(train_data))
+    }
+    # Validation data set (subset of training, for LOOCV)
+    val <- train_data[val_idx, ]
+    # Train is now all the the train, expect the validation set
+    train <- train_data[-val_idx, ]
+    
+    # Polynomial model of degree number_1 
+    mod <- glm(noisy.y ~ poly(x, d), data = train)
+    # Mean Squared Error - The average squared difference between 
+    # the estimated/predicted values and the actual value (10)
+    fold_errors[i] <- mean((predict(mod, val) - val$noisy.y)^ 2)
+  }
+  # At index number_1, append the mean error of the 10 folds
+  cv_errors[d] <- mean(fold_errors)
+}
+
+```
+
+
+c. Plot the best model's fitted line in blue and compare to the true function (the red line from the previous plot). 
+
+```{r}
+# Fitting 3rd degree polynomial
+mod <- glm(noisy.y ~ poly(x, 3), data = train)
+# Predicted values of y to plot
+fitted_line <- predict(mod, data.frame(x = x))
+
+{
+  plot(x, noisy.y, cex=.25)
+  # predicted line in blue
+  lines(x, fitted_line, col="blue", lty=1)
+  # actual line (no noise)
+  lines(x, y, col="red", lty=1)
+  legend("bottomright", legend=c("True", "Fitted"),
+       col=c("red", "blue"), lty=1)
+}
+```
+
+d. Comment on the results of (c). Why was performance better or worse at different order polynomials?
+
+Because the data generating process was cubic, CV error drops dramatically at the 3rd degree polynomial. Adding additional order polynomials does not improve fit.
+
+e. Report the CV error and test error at each order of polynomial. Which achieves the lowest CV error? How does the CV error compare to the test error? Comment on the results.
+
+```{r}
+# Vector of 0s length of 5
+test_errors <- numeric(5)
+
+# For number in 1-5:
+for (d in 1:5) {
+  # Polynomial model of degree number
+  mod <- glm(noisy.y ~ poly(x, d), data = train_data)
+  # MSE append to test_errors at index number
+  test_errors[d] <- mean((predict(mod, test_data) - test_data$noisy.y)^ 2)
+}
+
+# Plot the MSE for comparison
+# Compare the CV error to the test error.
+{
+  plot(1:5, cv_errors, type = 'b', xlab='Degree', ylab='MSE', col='red', ylim=c(6000, 11000))
+  lines(1:5, test_errors, type = 'b', xlab='Degree', ylab='MSE', col='green')
+  legend("topright", legend=c("cv","test"), col=c("red","green"), lty=1)
+}
+```
+
+The 3-degree polynomial has the lowest CV error. Models 1 and 2 are biased because they cannot closely fit the true cubic functional form and are underfitting. CV error and test error are reduced significantly once they reach the 3rd-order polynomial. Higher order polynomial functions do not really improve the model performance. Test error is slightly higher in the first- and second-degree polynomials, an indication that CV error is a slightly optimistic estimate of generalization error.
+
+## 3. Classifying a toy dataset
+
+a. Pick a new dataset from the `mlbench` package (one we haven't used in class). Experiment with classifying the data using KNN at different values of k. Use cross-validation to choose your best model.
+
+```{r}
+# Points from two Gaussian distributions
+ring <- mlbench.ringnorm(1000, 2)
+plot(ring)
+
+# Numeric vector length 100 of 0s
+cv_errors <- numeric(100)
+# 10th of ring data set
+N <- floor((1 / 10) * nrow(ring))
+
+# For number in 1-100 for folds:
+for (k in 1:100) {
+  # Vector of 10x 0s for fold errors
+  fold_errors <- numeric(10)
+  # Vector 1-1000, steps of 100
+  start <- seq(1, 1000, 100)
+  # For number in sequence from 1 to the length of the input.  (i.e. 1-10)
+  for (i in seq_along(start)) {
+    # Indexes from number to number+99 in start. 
+    idx <- start[i]:(start[i]+99)
+    # Get x and y
+    x <- ring$x
+    y <- ring$classes
+    # Get validation set using indexes
+    x_val <- x[idx, ]
+    y_val <- y[idx]
+    # Train set exclude validation
+    x_train <- x[-idx, ]
+    y_train <- y[-idx]
+    
+    # Get predicted y from knn(train, test, true classifications)
+    y_pred <- knn(x_train, x_val, y_train, k = k)
+    # Misclassification error
+    fold_errors[i] <- mean(y_pred != y_val)
+  }
+  # 
+  cv_errors[k] <- mean(fold_errors)
+}
+
+k <- which.min(cv_errors)
+k
+```
+
+b. Plot misclassification error rate at different values of k.
+
+```{r}
+# "b" is line and points (b = both)
+plot(1:100, cv_errors, type = 'b', xlab='K', ylab='Misclassification Error Rate')
+```
+
+c. Plot the decision boundary for your classifier using the function at the top code block, `plot_decision_boundary()`. Make sure you load this function into memory before trying to use it.
+
+```{r}
+# Create a data frame from all combinations of the supplied vectors or factors (like melt)
+grid <- expand.grid(x_1 = seq(min(ring$x[, 1] - 1),
+                              max(ring$x[, 1] + 1), by = 0.05),
+                    x_2 = seq(min(ring$x[, 2] - 1),
+                              max(ring$x[, 2] + 1), by = 0.05))
+
+# Prediction grid, (1,2 to 0,1 classes) to plot
+pred_grid <- as.numeric(knn(ring$x, grid, ring$classes, k = k, prob=TRUE)) - 1
+
+# (train_x, train_y, pred_grid, grid)
+plot_decision_boundary(ring$x, as.numeric(ring$classes) - 1,
+                       pred_grid, grid)
+```
+
+## 4. Performance measures for classification
+
+Recall the `Caravan` data from the week 2 lab (part of the `ISLR` package). Train a KNN model with k=2 using all the predictors in the dataset and the outcome `Purchase`. Create a confusion matrix with the test set predictions and the actual values of `Purchase`. Using the values of the confusion matrix, calculate precision, recall, and F1. (Note that `Yes` is the positive class and the confusion matrix may be differently oriented than the one presented in class.)
+
+```{r}
+# NOTE: You can scale the data and you might have got stronger results if you did!
+
+# Columns 1-85 to predict column 86
+X <- Caravan[,1:85]
+Y <- Caravan[,86]
+
+# Sample 1000 rows
+test <- sample(1:nrow(X), 1000)
+
+# Subset train and test data
+train.X <- X[-test,]
+test.X <- X[test,]
+train.Y <- Y[-test]
+test.Y <- Y[test]
+
+# Predicted values of Y based on knn
+pred <- knn(train.X, test.X, train.Y, k = 2)
+
+# Cross tabulation / contingency table
+confusion <- table(pred, test.Y)
+confusion
+
+# Get True Positive, True Negative rate etc.
+tp <- confusion["Yes", "Yes"]
+tn <- confusion["No", "No"]
+fp <- confusion["Yes", "No"]
+fn <- confusion["No", "Yes"]
+
+# Manually calculate the performance metrics
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1 <- 2 * precision * recall / (precision + recall)
+
+# Format output
+paste("Precision:",
+      round(precision, 3),
+      ", Recall:",
+      round(precision, 3),
+      ", F1:",
+      round(f1, 3))
+```
+
+## 5. ISLR Chapter 5 Exercise 3
+
+a. Explain how k-fold cross-validation is implemented.
+
+1. Divide the training data into k (roughly) equally sized partitions (non-overlapping sets).
+2. Train k models using one fold as a validation set, and the other k-1 folds as training set.
+3. For each model calculate the validation error using a performance metric of our choice (MSE, RMSE, misclassification error, precision, recall, f1, AUC, etc.).
+4. Compute a weighted average of the validation errors of all the models.
+
+b. What are the advantages and disadvantages of k-fold cross- validation relative to:
+   i. The validation set approach?
+     - lost data in validation approach; k-fold uses all data
+     - validation approach may overestimate the test error because of lost data
+     - validation approach estimates of test error can be highly variable depending on which observations end up in the training and validation sets.
+     - k-fold has lower bias because it incorporates all of the data
+     - k-fold is more computationally expensive than validation
+
+   ii. LOOCV?
+     - LOOCV has higher variance than k-fold because the training sets are highly correlated
+     - LOOCV has lower bias than k-fold CV.
+     - k-fold training sets are less correlated.
+     - LOOCV is more computationally expensive; model must be fit n times
+     - k-fold only fits k models with n-(n/k) observations.

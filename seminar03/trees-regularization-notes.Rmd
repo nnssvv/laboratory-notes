@@ -1,0 +1,410 @@
+---
+title: "Lab Week 7: Text as Data, Regularization"
+date: |
+  | `r format(Sys.time(), '%d %B %Y')`
+output: 
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+set.seed(1)
+```
+
+# Terminology
+
+|       **Model Complexity**: The number of features or terms included in a given predictive model, as well as whether the chosen model is linear, nonlinear, and so on.
+
+|       **Sparsity**: A sparse matrix is one where  most of the elements are zero. Sparse regression is an umbrella term for any regression that penalizes large models and therefore performs variable selection. Examples would be the LASSO, ridge regression, or sparse principal components analysis (which relies on the LASSO).
+
+|       **Regularization**: Reduce variance at the cost of introducing some bias. Can also be thought of as desensitization.
+
+|       **Ridge Regression**: Also known as *L2 regularization*, adds “squared magnitude” of coefficient as penalty term to the loss function.  if lambda is zero then you can imagine we get back OLS. However, if lambda is very large then it will add too much weight and it will lead to under-fitting. Having said that its important how lambda is chosen. This technique works very well to avoid over-fitting.
+
+|       **Lasso Regression**: Least Absolute Shrinkage and Selection Operator (LASSO) or *L1 regularization*, adds “absolute value of magnitude” of coefficient as penalty term to the loss function. Again, if lambda is zero then we will get back OLS whereas very large value will make coefficients zero hence it will under-fit. The key difference between these techniques is that Lasso shrinks the less important features coefficient to zero thus, removing some feature altogether. So, this works well for feature selection in case we have a huge number of features.
+
+|       **Lambda**: The lambda ($\lambda$) parameter (*shrinkage parameter / penalty*) controls the amount of regularization applied to the model. A non-negative value represents a shrinkage parameter, which multiplies P(α,β) in the objective. The larger lambda is, the more the coefficients are shrunk toward zero (and each other).
+
+
+# Ridge Regression and the Lasso
+
+We first load in the data from the ISLR package. Because we are using the `glmnet` package, we need to specify the model matrix and outcome rather than supplying a formula to glmnet.
+
+```{r, warning=FALSE, message=FALSE}
+library(ISLR)
+library(glmnet)
+
+# Removes NULL cases
+# Hitters: Baseball Players Data -- Essentially player statistics 
+df <- na.omit(Hitters)
+
+# Get the (column) names of a object
+names(Hitters)
+
+# model matrix w/o intercept (salary in this case)
+x <- model.matrix(Salary ~ .-1, data=df) 
+
+# The -1 ensures there is no constant in your model matrix.
+# There is a column of ones included and one category is omitted 
+# in the model matrix, to ensure your model will not suffer 
+# from multicollinearity (highly related explanatory vars).
+
+# Creates a design (or model) matrix, e.g., by expanding factors to a set of dummy variables
+head(df[14:16])
+head(x[14:16])
+
+y <- df$Salary # assigning salary as y, which we removed from x above
+```
+
+We fit a ridge regression model using `glmnet`. We set alpha=0 to fit a ridge model, alpha=1 corresponds to lasso, and values between 0 and 1 are a combination of the two called "elasticnet."
+
+We can use glmnet to take a look at how coefficients are shrunk at different values of lambda.
+
+```{r}
+# Ridge regression (regularization = desensitize)
+# alpha = 0 for ridge (alpha = 1 for lasso)
+mod_ridge <- glmnet(x, y, alpha=0)
+
+# The ridge regression will penalize your coefficients, 
+# such that those who are the least efficient in your 
+# estimation will "shrink" the fastest.
+plot(mod_ridge, xvar="lambda", label=T)
+
+## Interpreting the plot:
+# (1) Each line represents a coefficient whose value is going closer
+# to zero as you are penalizing more (increasing the lambda).
+# (2) The faster a coefficient is shrinking the less important 
+# it is in prediction.
+```
+
+To choose the optimal value of $\lambda$, we use the `cv.glmnet()` function. This performs cross-validation for us. 
+
+When we plot the output of `cv.glmnet()`, we will see two vertical lines, one at the minimum of CV error, one at one standard error from the minimum. One SE from minimum gives us a bit more shrinkage, resulting in a more parsimonious (minimizing complexity) model. We do this to be more conservative, assuming that CV error may slightly underestimate test error. The 20s at the top show that at each stage all 19 variables and the intercept are in the model.
+
+```{r}
+# Same ridge regression, but k-fold cross validated
+# Can specify lambda but default is chosen by glmnet sequence (see function doc)
+# which is precisely why we are using cv.glmnet
+cv_ridge <- cv.glmnet(x, y, alpha=0)
+
+# Plot the cv model with error lines
+plot(cv_ridge)
+
+# From the plot (above), the scaled variables (columns) that seem important.
+colnames(x)[c(7,14,15,16,20)] 
+
+# The lowest point in the curve (below) indicates the optimal lambda: 
+# the log value of lambda that best minimized the error in cross-validation. 
+
+# The numbers across the top of the plot refer to the 19 variables + 1 intercept
+# are in model. If variables are dropped this number will decrease.
+# The first and second vertical dashed lines represent the lambda value 
+# with the minimum MSE and the largest value within one standard error of it.
+```
+
+When we fit a lasso regression model using `glmnet`, we get a similar plot, but it is clear that variables are being shrunk to zero, performing variable selection (see the numbers at the top of the plot).
+
+```{r}
+# For Lasso penalty you set alpha to 1
+fit_lasso <- glmnet(x, y, alpha=1)
+
+# In Lasso coefficients can reach 0
+plot(fit_lasso, xvar="lambda", label=T)
+```
+
+We can also use the `cv.glmnet()` to choose an optimal value of $\lambda$ by performing cross-validation. Recall that cross-validation error is an estimate of test error.
+
+```{r}
+# Same Lasso model, but CV for MSE
+cv_lasso <- cv.glmnet(x, y, alpha=1)
+
+plot(cv_lasso)
+
+# Lambda for minimum MSE
+log(cv_lasso$lambda.min)
+
+# Largest lambda value within one standard error 
+log(cv_lasso$lambda.1se)
+```
+
+Now lets divide the data into a train and test set and plot test error to see how well cross-validation approximated test error. CV identified a decent value for $\lambda$ (between `lambda.min` and `lambda.1se`) but notice that CV error was a bit more optimistic than test error (compare the $y$-axis range).
+
+```{r}
+# Sample of data points (50%)
+train <- sample(1:nrow(x), nrow(x)/2)
+# OR...
+train <- sample(1:(nrow(x)/2))
+
+# Try as a rule not to make your variable names the same as functions
+# in this case train is our assignment for the training set, but train() is also
+# a separate function to estimate model parameters. Usually not an issue, but
+# occasionally it can confuse r (similar to how when loading packages, it might
+# indicate that functions or parameters in the package conflict in name with base
+# r functions and that the package overwrites the base r function use)
+
+# Lasso using sample index
+# Lambda is picked by automatic gridsearch in glmnet()
+lasso_tr <- glmnet(x[train,],y[train])
+
+# Using Lasso, predict on test data (reverse lookup train index)
+pred <- predict(lasso_tr, x[-train,])
+
+# Mean Square Error - Use apply() to apply the mean function to matrix
+# (y of the test set -minus- pred y of test set) squared
+#  2 indicates that you want the function (in this case mean()) 
+#  applied over the columns (1 would be rows)
+mse <- apply((y[-train] - pred)^2, 2, mean)
+
+# You need to use apply because the function mean() won't let you specify 
+# just columns (or rows)
+# You can use colMeans() as well 
+mse3 <- colMeans((y[-train] - pred)^2)
+
+# Plot log Lambda (log for ease of plotting/interpreting large numbers)
+# Need to specify as the previous functions plot lambda as a log, here it needs
+# to be specified. 
+# Try it without log() to see the difference
+plot(log(lasso_tr$lambda), mse, type="b", xlab="Log(lambda)")
+
+# Return the value of lambda which lowest MSE
+lam_best <- lasso_tr$lambda[order(mse)[1]]
+# [1] 27.56611
+log(lam_best)
+
+# Dots correspond to zero
+# Coef() from glmnet, where s is the value of the penalty parameter (lambda)
+coef(lasso_tr, s=lam_best)
+```
+
+## Classifying NYT articles
+
+A common application of regularized regression is text classification. Regularized regression does a great job at text classification because texts have many features (counts of words), oftentimes more features than observations which lasso and ridge can accommodate and non-regularized linear models cannot. Feature matrices for text classification problems also are *sparse* (mostly zeroes) and features are often correlated (collinearity). Lasso and ridge can handle collinearity while other linear models can not.
+
+These models can be really useful for social scientists working with political documents, social media data, etc. Below we introduce a simple example of classifying New York Times articles according to subject (businees or world news).
+
+First we read business and world article snippets into one data frame. These snippets were accessed from the [New York Times Archive API](https://developer.nytimes.com/docs/archive-product/1/overview).
+
+```{r, warning=FALSE, message=FALSE}
+library(quanteda)
+library(readr)
+
+# Remember to ensure these data files are in the same directory as this Rmd.
+business <- read.csv('business.csv')
+world <- read.csv('world.csv')
+
+# Combine business and world articles into one dataset
+articles <- rbind(business, world)
+# Names/Columns
+names(articles)
+# First six rows of text column
+head(articles$snippet)
+```
+
+Using the package `quanteda`, we convert this data frame into a matrix of word counts for each snippet. We do so by constructing a corpus object and transforming the corpus into a **document feature matrix (dfm)** which represents each document as counts of each word that appears in the corpus.
+
+```{r, warning=FALSE, message=FALSE}
+# Create a corpus object
+# varname (column name) 'snippet' needs to be specified as the text, otherwise corpus()
+# will automatically select without specification if varname is 'text'
+corpus <- corpus(articles, text_field="snippet")
+corpus
+
+# Create a document-feature matrix (with text preprocessing)
+dfm <- dfm(corpus, tolower=T, remove_punct = TRUE, remove_numbers = TRUE)
+dfm
+```
+
+Cross-validate logistic regression with cv.glmnet (family="binomial"), measuring misclassification error. Plot the cross-validation curve.
+
+```{r}
+# Train indexes from dfm (.8)
+tr <- sample(nrow(dfm), floor(nrow(dfm) * 0.8))
+
+# Cross-validate logistic regression 
+# Setting type.measure to "class" gives the misclassification error for logit.
+    # (for binomial or multinomial logistic regression only)
+# Default of alpha is 1, so below is a Lasso model. 
+cv <- cv.glmnet(dfm[tr,], dfm$section[tr], family="binomial", type.measure='class')
+plot(cv)
+# Remember two vertical lines for lambda, one at the minimum of CV error, one at one standard error from the minimum
+```
+
+Evaluate performance for the best-fit model.
+
+```{r}
+# Dataframe: 
+#   actual - True Y values (from test data)
+#   predicted - Predicted values for Y with Lasso model (above) and lambda.min
+#   prob - The value(s) of lambda at which predictions are made.
+
+# "s" is that value of the penalty parameter (i.e. lambda) at 
+# which predictions are required. By default it is lambda.1se
+# lambda.min is the value of lambda that gives minimum mean cross-validated error,
+
+test_set <- data.frame(actual = dfm$section[-tr],
+                       predicted = as.character(predict(cv, dfm[-tr,], s = "lambda.min", type = "class")),
+                       prob = as.numeric(predict(cv, dfm[-tr,], s = "lambda.min")))
+
+# Accuracy (Correct guesses)
+mean(test_set$actual == test_set$predicted)
+
+# Confusion matrix (Cross tabulation)
+table(test_set$actual, test_set$predicted)
+```
+
+# Decision Trees
+
+Below we use the package `tree` for training tree models.
+
+```{r}
+#install.packages('tree')
+
+library(tree)
+```
+
+We'll use the China Quarterly censorship data discussed in class. China Quarterly, the top China area studies journal, was sent a list of articles to remove by Chinese Government officials. They posted these articles on their blogs. The data `cq` is derived from the titles of these articles. We will examine these data using the `tree` package in R, as in the lab in the book. We have a binary response variable `censored` (for if the article was on the list of articles to censored). The remaining variables represent counts of key words gathered from the corpus of censored and uncensored article titles.
+
+```{r}
+# Read in the data
+cq <- read.csv('cq_counts.csv')
+
+# Censored (1) or not
+cq$censored <- as.factor(cq$censored)
+# Frequency count
+table(cq$censored)
+# Variables/columns
+names(cq)
+```
+
+Using the `tree` package we fit a tree to these data, and summarize and plot it. This model classifies articles as censored or uncensored.
+
+```{r}
+# Grow a tree to predict if a article if censored
+# . meaning all variables
+tree <- tree(censored ~ ., data = cq)
+
+## Summary statistics.
+#   Terminal node has no child nodes
+#   A measure of the error remaining in the tree after construction (MSE equivalent)
+summary(tree)
+
+# Plot and add text from tree.
+# < 0.5 because variables are 0 or 1.
+# If pretty = 0 then the level names of a factor split attributes are used unchanged.
+plot(tree);text(tree, pretty = 0)
+```
+
+for a detailed summary of the tree, print it:
+
+```{r}
+# Print tree object directly.
+tree
+```
+
+Lets create a training and test set, grow tree on the training set, and evaluate its performance on the test set.
+
+```{r}
+# Number of rows in China Quarterly data.
+N <- nrow(cq)
+# Train indexes (.8)
+tr <- sample(1:N, floor(N * .8))
+# Build tree model off training data.
+tree <- tree(censored ~ ., data = cq[tr,])
+
+# Plot trained model
+plot(tree);text(tree, pretty = 0)
+
+# Use tree model to predict censored or not.
+# A classification tree, a factor of the predicted classes 
+# (that with highest posterior probability, with ties split randomly).
+tree_pred <- predict(tree, cq[-tr,], type ="class")
+
+# Confusion Matrix
+table(tree_pred, cq[-tr,]$censored)
+```
+
+This tree was grown to full depth, and might be too variable. We now use CV to prune it.
+
+```{r}
+# Pruning is a data compression technique to reduces the size of decision trees 
+# by removing sections of the tree that are non-critical and redundant to classify instances. 
+# A tree that is too large risks overfitting the training data and poorly generalizing to new samples.
+
+# Run CV to find number of misclassifications.
+# Apply the prune.misclass function which determines 
+# a nested sequence of subtrees of the supplied tree 
+# by recursively “snipping” off the least important splits.
+cv_tree <- cv.tree(tree, FUN = prune.misclass)
+cv_tree
+
+# Number of misclassifications based on size (splits).
+# Can see there is no futher reduction in error after 5 splits.
+plot(cv_tree)
+# Prune with the specific subtree
+prune_tree <- prune.misclass(tree, best = 5)
+# best: If there is no tree in the sequence of the requested size, the next largest is returned.
+plot(prune_tree);text(prune_tree, pretty = 0)
+```
+
+Now lets evaluate this pruned tree on the test data.
+
+```{r}
+# Use tree model to predict
+tree_pred <- predict(prune_tree, cq[-tr,], type ="class")
+# Confusion Matrix (cross tabulation)
+table(tree_pred, cq[-tr,]$censored)
+```
+
+It has done the same as our original tree. So pruning did not hurt us, and gave us a simpler tree.
+
+## Chapter 6 Exercises
+
+8. In this exercise, we will generate simulated data, and will then use this data to perform best subset selection.
+
+(a) Use the `rnorm()` function to generate a predictor $X$ of length $n = 100$, as well as a noise vector $\varepsilon$ of length $n = 100$.
+
+```{r}
+```
+
+(b) Generate a response vector $Y$ of length $n = 100$ according to the model
+$$Y = \beta_0 +\beta_1X +\beta_2X^2 +\beta_3X^3 +\varepsilon,$$
+where $\beta_0, \beta_1, \beta_2$, and $\beta_3$ are constants of your choice.
+
+```{r}
+```
+
+(e) Fit a lasso model to the simulated data, using $X,X^2, \dots, X^{10}$ as predictors. Use cross-validation to select the optimal value of $\lambda$. Create plots of the cross-validation error as a function of $\lambda$. Report the resulting coefficient estimates, and discuss the results obtained.
+
+```{r}
+```
+
+(f) Now generate a response vector $Y$ according to the model
+$$Y = \beta_0 + \beta_7X^7 + \varepsilon,$$
+and perform the lasso. Discuss the results obtained.
+
+```{r}
+```
+
+9. In this exercise, we will predict the number of applications received using the other variables in the `College` data set.
+
+(a) Split the data set into a training set and a test set.
+
+```{r}
+```
+
+(b) Fit a linear model using least squares on the training set, and report the test error obtained.
+
+```{r}
+```
+
+(c) Fit a ridge regression model on the training set, with $\lambda$ chosen by cross-validation. Report the test error obtained.
+
+```{r}
+```
+
+(d) Fit a lasso model on the training set, with $\lambda$ chosen by cross-validation. Report the test error obtained, along with the number of non-zero coefficient estimates.
+
+```{r}
+```
+
+(g) Comment on the results obtained. How accurately can we predict the number of college applications received? Is there much difference among the test errors resulting from these two approaches?
