@@ -1,0 +1,180 @@
+---
+title: "Classifying Disputed Federalist Papers"
+date: |
+  | `r format(Sys.time(), '%d %B %Y')`
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(1)
+```
+
+# Federalist Paper Classification Exercise
+
+Here we will analyze the text of The Federalist Papers. These are important primary historical documents recording the intent of the authors of the US Constitution. The goal of these articles was to persuade people in the state of New York to ratify the recently drafted US Constitution. The papers were published between 1787 and 1788 in New York State newspapers. They are thought to be authored by Alexander Hamilton, John Jay, and James Madison.
+
+The authorship of these documents, however, has been a matter of academic debate. As they were originally published under the pseudonym "Publius," we cannot be entirely certain of the authorship of each essay. Various experts have agreed that Hamilton authored 51, Madison authored 15, Hamilton and Madison jointly authored 3, and John Jay authored 5. The remaining 11 essays' authorship is disputed. In this essay, we will use the perceptron to predict the authorship of these disputed documents using the word frequencies and authorship of the undisputed documents.
+
+## Load the corpus
+
+First, we load the 85 essays into R using the `readtext` package which gathers all text files matching the pattern "federalist/fp*.txt." We then create a corpus—a collection of documents—using the `corpus()` function in the `quanteda` package.
+
+```{r, warning=FALSE, message=FALSE}
+## load/install two required libraries
+
+#install.packages("quanteda")
+#install.packages("readtext")
+
+library(quanteda)
+library(readtext)
+
+## load the raw corpus
+texts <- readtext("federalist/fp*.txt")
+head(texts)
+
+corpus <- corpus(texts)
+corpus
+```
+
+## Create a feature matrix
+
+Since our goal is classification, we need to engineer features to help us distinguish authors based on the idiosyncrasies of the language they use. We can accomplish this using a **document feature matrix** that represents documents as a vector of word counts.
+
+```{r}
+dfm <- dfm(corpus, tolower=T, remove_punct = TRUE)
+dfm
+dim(dfm)
+```
+
+## Create a word cloud
+
+To visualize our features, we can plot a word cloud using the `quanteda` package and the function `textplot_wordcloud`. This represents our document vectors by scaling the size of words in the plot according to the frequency of their occurrence in the document. Can you figure out what the topics of these papers are by looking at the plots?
+
+```{r}
+dfm_stop <- dfm(corpus, tolower=T, remove_punct = TRUE, remove = stopwords("english"))
+
+textplot_wordcloud(dfm_stop[12, ]) # essay no. 12
+textplot_wordcloud(dfm_stop[24, ]) # essay no. 24
+```
+
+Calculate average term frequency separately for Hamilton and Madison across each author's entire body of documents. The results suggest that Hamilton prefers to use terms such as there and upon, which Madison seldom uses, preferring instead to use consequently and whilst.
+
+```{r}
+## document-term matrix converted to matrix for manipulation 
+dfm <- dfm / rowSums(dfm) * 1000 # term frequency per 1000 words
+head(dfm)
+## words of interest
+words <- c("although", "always", "commonly", "consequently",
+           "considerable", "enough", "there", "upon", "while", "whilst")
+
+## select only these words
+dfm <- dfm_select(dfm, words)
+dfm
+```
+
+The results suggest that Hamilton prefers to use terms such as there and upon, which Madison seldom uses, preferring instead to use consequently and whilst.
+
+```{r}
+## essays written by Madison and Hamilton
+madison <- c(10, 14, 37:48, 58)
+hamilton <- c(1, 6:9, 11:13, 15:17, 21:36, 59:61, 65:85)
+
+## average among Hamilton/Madison essays
+dfm_ave <- rbind(hamilton = colSums(dfm[hamilton, ]) / length(hamilton), 
+                 madison = colSums(dfm[madison, ]) / length(madison))
+dfm_ave
+```
+
+We first create the outcome variable by coding essays authored by Hamilton as 1 and those written by Madison as -1. We then create a data frame using the dfm (counts of words) and the `author` outcome. We separate the Federalist Papers with `disputed` authorship from those with `undisputed` authorship to train our model. For the undisputed documents, we split the data into a training and test set.
+
+```{r}
+author <- rep(NA, nrow(dfm)) # a vector with missing values
+author[hamilton] <- 1  # 1 if Hamilton
+author[madison] <- -1  # -1 if Madison
+
+## data frame for classification
+data <- data.frame(author = author, convert(dfm, to = "data.frame"))
+head(data)
+
+# Divide into train, test, and "disputed"
+
+disputed <- data[is.na(data$author), ]
+undisputed <- data[!is.na(data$author), ]
+
+n_test <- floor(nrow(undisputed) * 0.3)
+idx <- sample(1:nrow(undisputed), n_test)
+
+head(idx)
+te <- undisputed[idx,]
+tr <- undisputed[-idx,]
+```
+
+We will use a classifier that is very similar to the perceptron we covered in lecture. The learning model is identical to the learning model discussed in lecture, but we learn weights $\mathbf{w}$ using OLS regression rather than the perceptron learning algorithm. We classify observations by taking the sign of the linear combination of the features $\mathbf{x}$ (term frequency per 1000 words for the selected word of interest) and weights $\mathbf{w}$:
+
+$$h(\mathbf{x}) = sign(\mathbf{w}'{\mathbf{x}})$$
+
+The `lm()` function will determine our weights $\mathbf{w} \equiv \boldsymbol{\beta}$ with the OLS learning algorithm (minimizing RSS). These weights define $g(x) \in \mathcal{H}$. We can examine the weights with `summary()`:
+
+```{r}
+model <- lm(author ~ upon + there + consequently + whilst, 
+             data = tr)
+summary(model)
+```
+
+## Evaluate performance
+
+Our perceptron model perfectly classifies the training and test set.
+
+```{r}
+y_hat_tr <- predict(model, tr)
+y_hat_te <- predict(model, newdata = te)
+
+# The sign() function of the perceptron: 1 if classified as Hamilton, -1 otherwise
+y_class_tr <- ifelse(y_hat_tr > 0, 1, -1)
+y_class_te <- ifelse(y_hat_te > 0, 1, -1)
+
+## Training confusion matrix
+table(y_class_tr, tr$author)
+mean(y_class_tr != tr$author)
+
+## Test confusion matrix
+table(y_class_te, te$author)
+mean(y_class_te != te$author)
+```
+
+## Predict authorship of disputed documents
+
+Now lets use the model we have learned from the training data to predict the authorship of the disputed documents.
+
+```{r}
+## prediction of disputed authorship
+y_hat_dis <- predict(model, newdata = disputed)
+y_class_dis <- ifelse(y_hat_dis > 0, 1, -1)
+y_class_dis # predicted classes
+table(y_class_dis)
+```
+
+We can visualize the output of our model in `ggplot2`. Here we plot the predicted values for essays authored by Hamilton (green triangles), essays authored by Madison (blue squares), and the essays with disputed authorshiop (red circles). We've classified all essays with undisputed authorship perfectly. Our model predicts all but two of the disputed documents were authored by Madison.
+
+```{r}
+library(ggplot2)
+
+y_hat <- predict(model, newdata = data)
+y_true <- ifelse(data$author == 1, "Hamilton", "Madison")
+y_true[is.na(data$author)] <- "Disputed"
+
+plot_df <- data.frame(
+  doc_id = 1:nrow(data),
+  y_true,
+  y_hat
+)
+
+ggplot(plot_df, aes(x = doc_id, y = y_hat, color = y_true, shape = y_true)) +
+  geom_point(size = 3, alpha = .8) + 
+  geom_hline(yintercept=0, linetype = 'dotted') +
+  labs(x="Federalist Paper #",
+       y = "Predicted Values",
+       color="True Values",
+       shape="True Values")
+```

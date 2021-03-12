@@ -1,0 +1,166 @@
+---
+title: "K-Nearest Neighbors"
+date: |
+  | `r format(Sys.time(), '%d %B %Y')`
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(1)
+```
+
+# K-Nearest Neighbors Example
+
+## Load in data
+
+Here we install and load the `ISLR` and `class` packages using the `install.packages()` and `library()` functions. The `install.packages()` allows us to install thousands of apps from the [Comprehensive R Archive Network or CRAN](https://cran.r-project.org). This hosts apps that have been created and maintained by the R community.
+
+```{r}
+#install.packages('ISLR')
+#install.packages('class')
+library(ISLR)
+library(class)
+```
+
+## Global environment
+
+Right now, you should see an empty environment on the right side of your window under the "Environment" tab. Click on the dropdown and select `package:ISLR`. You should now see multiple items, including `Caravan`. Loading the package `ISLR` gives us access to all of these datasets.
+
+## Exploring the data
+
+But what is `Caravan`? How many observations are there? How many features are there in the data? First, we can use the `dim()` function to tell us the dimensions of the dataset. We can also learn more about what these variables represent by accessing the **documentation.** Documentation can tell more about an R object and how we might use it. To access documentation, we can put a `?` before an object we want to know more about. So we can take a look at `Caravan` by entering `?Caravan` in the **console** (the terminal at the bottom of this window). We can easily run code within an R block by clicking on a line or selecting multiple lines and pressing "Command + Enter" on Mac or "Ctrl + Enter" on a PC.
+
+We can see now that this dataset a collection of 5822 real customer records from an insurance company. Features represent various sociodemographic variables and the dependent variable represents whether or not this individual purchased an insurance policy.
+ 
+```{r}
+dim(Caravan)
+?Caravan
+```
+
+We can look at each individual dimension of the data using `nrow()` and `ncol()` functions. For descriptive statistics, we can use the `summary()` function, though it might be less messy to look at a specific variable. We can see using the `str()` function that `Caravan` is a data frame consisting of multiple numeric columns and one factor column for our outcome variable `Purchase`. To extract the `Purchase` vector from the data frame, we use the `$` sign. Now when we run `summary()` on this vector, our output is less of a mess. Note that because the vector is of type **factor** the summary is a contingency table of counts. Numeric vectors like `ABYSTAND` will display descriptive statistics such as mean, median, max, min and quartiles. We can also look at the list of column names with the `names()` function. If we want to take a look at the first few rows of the data, we can use `head()`.
+
+```{r}
+nrow(Caravan)
+ncol(Caravan)
+
+summary(Caravan)
+str(Caravan)
+
+summary(Caravan$Purchase)
+summary(Caravan$ABYSTAND)
+
+names(Caravan)
+
+head(Caravan)
+```
+
+## Subsetting and Assignment
+
+Recall the **assignment operator** `<-`, which can be thought of as an arrow from the value on the right hand side to the name you are assigning it. We will use this to define our `X` and `Y` variables. We can select the appropriate columns through subsetting.
+
+To subset a dataframe we use brackets. Within the brackets we specify row and column values (in that order). One way of subsetting our features would be to use the integer corresponding to the columns we want. Since we want the first 85 columns, we use a sequence from 1 to 85. This sequence is shorthanded as `1:85`. We can see how this sequence works by running `1:85` by itself. To select the outcome variable `Y`, we select the 86th column.
+
+```{r}
+X <- Caravan[,1:85]
+Y <- Caravan[,86]
+
+1:85
+
+X <- Caravan[,-86]
+Y <- Caravan[,-c(1:85)]
+```
+
+We can also subset using strings. This is impractical with 85 features, but would be useful with 3.
+
+```{r}
+X <- Caravan[,c("MOSTYPE", "MAANTHUI", "MGEMOMV")]
+X <- Caravan[,names(Caravan)[1:85]]
+Y <- Caravan[,'Purchase']
+```
+
+Now we have our complete sample, separated into `X` and `Y`. 
+
+## Standardize Features
+
+We standardize because variables that are on a large scale will have a much larger effect on the distance between the observations. We can see after standardizing, our features have unit variance.
+
+```{r}
+
+X <- scale(X)
+
+var(Caravan[,1])
+var(Caravan[,2])
+var(X[,1])
+var(X[,2])
+```
+
+## Divide into train and test sets
+
+A very simple way of dividing a training and test set would be to take the fist 1000 rows (approximately 1/6 of the data). If we wanted a random sample, we could use the function `sample()` on `1:nrow(X)`. The variable `test` contains the indexes of the test data. We can use these to subset by row in the same way we subsetted by columns earlier.
+
+```{r}
+test <- 1:1000
+
+?sample
+test <- sample(1:nrow(X), 1000)
+
+train.X <- X[-test,]
+test.X <- X[test,]
+train.Y <- Y[-test]
+test.Y <- Y[test]
+```
+
+## Fit a model
+
+First we set a random seed so we can have a deterministic output. This is important if we wish to reproduce our findings at a later time. To make predictions using a nearest neighbors classifier, we use the function `knn()` from the package `class()`. This function trains a KNN model and outputs class predictions for test data. Inputs to the `knn()` function are the features of the training set, the features of the test set and the outcome of the training set. Predictions given inputs `test.X` are saved in `pred.Y`.
+
+```{r}
+set.seed(1)
+pred.Y <- knn(train.X, test.X, train.Y, k=10)
+```
+
+## Calculate the error rate
+
+We discussed misclassification error rate as a way to evaluate classification models in class today. We can calculate the misclassification error rate by taking the mean of the boolean statement, `test.Y != pred.Y`. It's only 7 percent! Good right? Wrong! As you see from the `summary()` output for the Y variable, only 6% of individuals in the dataset purchased insurance. This means that we can achieve an error rate of only 6% if we always predict that an individual will not purchase insurance. We will discuss alternative error measures in more detail in the coming lectures, but misclassification error rate is not going to cut it for this classification problem. When the class outcomes of a classification problem are highly **imbalanced**, we usually want to avoid accuracy.
+
+```{r}
+# Misclassification error rate
+mean(test.Y != pred.Y)
+
+summary(Y)
+348/5822
+```
+
+F1 is a performance measure that is less sensitive to class imbalance. First, using the confusion matrix, calculate the components of the F1 score: precision and recall.
+
+```{r}
+
+
+
+```
+
+Using precision and recall, calculate F1.
+
+```{r}
+
+```
+
+Write a function `F1()` that takes as input the true y and the predicted y and returns the F1 score. If you have trouble writing a function, reference ISL lab 3.6.7
+
+```{r}
+
+```
+
+## Compare different models
+
+Evaluate models with different values of K using F1. Which one performs best? 
+
+```{r}
+
+```
+
+## Challenge
+
+1. Work on Ch. 4 exercise 13. Only do KNN (ignore logistic regression and LDA)
+2. Work on Lab 3.6.5
