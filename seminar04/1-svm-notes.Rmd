@@ -1,0 +1,491 @@
+---
+title: "Lab Week 9: SVM"
+author: "Instructor: Blake Miller"
+date: |
+  | `r format(Sys.time(), '%d %B %Y')`
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+# Set seed
+set.seed(1)
+```
+
+# SVM
+
+This lab on Support Vector Machines in R is an abbreviated version of p. 359-366 of "Introduction to Statistical Learning with Applications in R" by Gareth James, Daniela Witten, Trevor Hastie and Robert Tibshirani.
+
+# 9.6 Lab: Support Vector Machines
+
+In this lab, we'll use the `e1071` library in `R` to demonstrate the support vector classifier and the SVM. Another option is the `LiblineaR` library, which is particularly useful for very large linear problems.
+
+# 9.6.1 Support Vector Classifier
+
+The `e1071` library contains implementations for a number of statistical learning methods. In particular, the `svm()` function can be used to fit a support vector classifier when the argument `kernel="linear"` is used.
+
+**Q. What is a Kernel?**
+The objective of SVMs is to segregate classes (two or more) in the best possible way, as we said in the lecture (6.1) this is defined by the widest possible margin between classes. The function of kernel is to take data as input and transform it into the required form to make them more easily seperable. Different SVM algorithms use different types of kernel functions. These functions can be different types, such a linear which we will start with today.
+
+**Q. What is the Kernel Trick?**
+In addition to the shape of the boundary, SVMs also use a technique called the *kernel-trick* to separate data points that can not be easily divided.  Here, the kernel takes a low-dimension input space and transforms it into a higher dimensional space to be able to classify data points.  In other words, *SVMs converts a non-separable (data points) problem to a separable problem by adding more dimensions*.
+
+**NOTE:** This function uses a slightly different formulation from (9.14) and (9.25) in the book:
+
+$$\underset{\beta_0, \beta_1, \dots, \beta_p}{min}\left\{\sum_{i=1}^n max[0,1-y_i f(x_i)]+ \lambda\sum_{j=1}^p \beta_j^2\right\}$$
+Social data is often not clean data, and some amount of overlap between classification categories occurs.
+
+A `cost` argument allows us to specify the cost of a violation to the margin. This is to build on maximal margin classifier for non-separable classes. It is a *regularization parameter*, as it introduces bias where some points affect the positioning of the hyperplane more than others. 
+
+It is not the same as **C** is defined in the book. When the `cost` argument is **small**, then the margins will be wide and many support vectors will be on the margin or will violate the margin. When the `cost` argument is large, then the margins will be narrow and there will be few support vectors on the margin or violating the margin.
+
+We can use the `svm()` function to fit the support vector classifier for a given value of the `cost` parameter. Here we demonstrate the use of this function on a two-dimensional example so that we can plot the resulting decision boundary. Let's start by generating a set of observations, which belong to two classes
+
+**Q. What are support vectors?** 
+Support vectors are the data points that are closer to the *separating hyperplane* (decision boundary) and influence its position and orientation. They are inside or on the *margin* which is the difference from the separating hyperplane to each class aiming to have maximial margins / differences between classes. Support vectors are thus the data points on the margin boundary.
+
+**Q. What is "C"?**
+If you use a SVM from a different library or in python (scikit learn) you will likely come across parameter C.  The margin around the decision boundary can be “softened” in the SVM implementation. That is, it allows for some of the points to creep into the margin if this makes for a better fit, where by tuning C we are adjusting the hardness of the margins. A large value is a hard margin, and data points cannot lie in it, whereas for a smaller value the margin is softer and can grow to encompass some points.
+
+```{r}
+set.seed(1)
+
+# Matrix of normally distributed values (20 observations, 2 variables).
+x <- matrix(rnorm(20*2), ncol=2)
+
+# Classes where one side of the normal curve will be -1 and the other side 1.
+class <- c(rep(-1,10), rep(1,10))
+
+# +1 to for the first 10 observations of x (corresponding to class == 1)
+x[class == 1,] <- x[class == 1,] + 1
+
+# We +1 make the classes more easily separated.
+# x is multivariate normal and we’re shifting the mean by one for the positive class.
+```
+
+Let's plot the data to see whether the classes are linearly separable:
+
+```{r}
+# Plot using ggplot2 (Additional materials for ggplot in slack)
+library(ggplot2)
+
+# Scatterplot from data - aes() is aesthetic mappings to map the data to visual properties.
+# Colour based on values of y
+ggplot(data.frame(x), aes(X1, X2, colour = factor(class))) + # initializes a ggplot object
+  geom_point() # Scatterplot
+```
+
+Nope; not linear. Next, we fit the support vector classifier. 
+
+Note that in order for the `svm()` function to perform **classification** (as opposed to SVM-based regression), we must encode the response as a **factor** (categorical data):
+
+```{r}
+# Misc Functions of the Department of Statistics (University of Vienna)
+library(e1071)
+
+# Building training dataset 
+training_data <- data.frame(x = x, class = as.factor(class))
+
+# SVM using R formula and linear kernel.
+# 1. cost of constraints violation (default: 1). 
+#   You can search for this parameter from a series of candidate values,
+#   like we did for the value of lambda, in our last class.
+# 2. scale = FALSE means that we are not standardizing  
+#   (zero mean and unit variance) our variables.
+
+svmfit <- svm(class ~ ., data = training_data, kernel = "linear", cost = 10, scale = FALSE)
+```
+
+The argument `scale = FALSE` tells the `svm()` function not to scale each feature to have mean zero or standard deviation one; depending on the application, we might prefer to use `scale = TRUE`.
+
+We standardize variables because SVMs try to maximize the distance between the separating plane and the support vectors. If one feature (i.e. one dimension in this space) has very large values, it will dominate the other features when calculating the distance. If you rescale all features (e.g. to [0, 1]), they all have the same influence on the distance metric.
+
+We can now plot the support vector classifier by calling the `plot()` function on the output of the call to `svm()`, as well as the data used in the call to `svm()`:
+
+```{r}
+# Plot the classifier
+
+plot(svmfit, training_data)
+```
+
+The region of feature space that will be assigned to the -1 class is shown in light blue, and the region that will be assigned to the +1 class is shown in purple. The decision boundary between the two classes is linear (because we used the argument `kernel = "linear"`), though due to the way in which the plotting function is implemented in this library the decision boundary looks somewhat jagged in the plot. 
+
+We see that in this case only one observation is misclassified. (Note also that the second feature is plotted on the x-axis and the first feature is plotted on the y-axis, in contrast to the behavior of the usual `plot()` function in `R`.) 
+
+The **support vectors** are plotted as **crosses** and the remaining observations are plotted as **circles**; we see here that there are seven support vectors. We can determine their identities as follows:
+
+```{r}
+# Index of points in the dataset which form the support vectors
+svmfit$index
+```
+
+We can obtain some basic information about the support vector classifier fit using the `summary()` command:
+
+```{r}
+summary(svmfit)
+```
+
+This tells us, for instance, that a linear kernel was used with `cost = 10`, and that there were seven support vectors, four in one class and three in the other. What if we instead used a smaller value of the `cost` parameter?
+
+```{r}
+# SVM model with softer boundary
+svmfit <- svm(class ~ ., data = training_data, kernel = "linear", cost = 0.1, scale = FALSE)
+
+# More support vectors
+plot(svmfit, training_data)
+
+# Index of vectors
+svmfit$index
+
+# How many vectors? - 16
+length(svmfit$index)
+```
+
+Now that a smaller value of the `cost` parameter is being used, we obtain a larger number of support vectors, because the margin is now **wider**. Unfortunately, the `svm()` function does not explicitly output the coefficients of the linear decision boundary obtained when the support vector classifier is fit, nor does it output the width of the margin.
+
+The `e1071` library includes a built-in function, `tune()`, to perform cross-validation. By default, `tune()` performs **ten-fold cross-validation** on a set of models of interest. In order to use this function, we pass in relevant information about the set of models that are under consideration. The following command indicates that we want to compare SVMs with a linear kernel, using a range of values of the cost parameter:
+
+```{r}
+set.seed(1)
+# Use tune to search to the 'best' value of the cost parameter from
+# a list of candidate values.
+
+# You pass the model to tune:
+#   svm - Function to tune (NOT the name of your model)
+#   class ~ . - Formula 
+#   data - Literal data
+#   ranges - Named list of parameter vectors (spanning the sample space)
+
+tune_out <- tune(svm, class ~ ., data = training_data, kernel = "linear", 
+                ranges = list(cost = c(0.001, 0.01, 0.1, 1,5,10,100)))
+```
+
+We can easily access the cross-validation errors for each of these models using the `summary()` command:
+
+```{r}
+# If you print this in the R console, you might see this output more clearly.
+summary(tune_out)
+
+# best parameters for cost: 0.1
+# best performance: 0.05 
+
+# The error is either the classification error (class) 
+# or mean squared error (regression).
+```
+
+The `tune()` function stores the best model obtained, which can be accessed as follows:
+
+```{r}
+# Acessing the best model from tune
+bestmod <- tune_out$best.model
+
+# Set up / parameters of the best model
+summary(bestmod)
+
+# Note that SVM Type refers to the range of the parameters.
+# The range of C is from zero to infinity but nu is always between [0,1].
+```
+
+As usual, the `predict()` function can be used to predict the class label on a set of test observations, at any given value of the cost parameter. Let's generate a test data set:
+
+```{r}
+# Set up test dataset
+xtest <- matrix(rnorm(20*2), ncol = 2)
+
+# Vector, size, sampling with replacement
+ytest <- sample(c(-1,1), 20, rep = TRUE)
+
+# Easier to separate (+1 same as earlier)
+xtest[ytest == 1,] <- xtest[ytest == 1,] + 1
+test_data <- data.frame(x = xtest, class = as.factor(ytest))
+```
+
+Now we predict the class labels of these test observations. Here we use the best model obtained through cross-validation in order to make predictions:
+
+```{r}
+# Predicted values using best svm model
+class_pred <- predict(bestmod, test_data)
+
+# Confusion matrix
+# Adding labels for predicted and true values.
+table(predict = class_pred, truth = test_data$class)
+```
+
+Thus, with this value of `cost`, 19 of the test observations are correctly classified. What if we had instead used `cost = 0.01`?
+
+```{r}
+# Cost was 0.1 for the best model, so what happens if we make it even smaller?
+svmfit <- svm(class~., data = training_data, kernel = "linear", cost = 0.01, scale = FALSE)
+
+# Predict values
+class_pred <- predict(svmfit, test_data)
+
+# Confusion matrix
+table(predict = class_pred, truth = test_data$class)
+```
+
+In this case one additional observation is misclassified.
+
+Now consider a situation in which the two classes are linearly separable.
+
+Then we can find a separating hyperplane using the `svm()` function. First we'll give our simulated data a little nudge so that they are linearly separable:
+
+```{r}
+# Linearly separable classes (adding a extra 0.5 on top of +1)
+x[class == 1,] <- x[class == 1,] + 0.5
+
+# Plot the data
+ggplot(data.frame(x), aes(X1, X2, colour = factor(class))) + # Set up ggplot obj
+  geom_point() # Scatter plot
+```
+
+Now the observations are **just barely linearly** separable. We fit the support vector classifier and plot the resulting hyperplane, using a very large value of `cost` so that no observations are misclassified.
+
+```{r}
+# Training data
+training_data2 <- data.frame(x = x, class = as.factor(class))
+
+# Fit the model.
+# 1e5 is equivalent to 1 × 10^5 meaning 100,000.
+svmfit <- svm(class~., data = training_data2, kernel = "linear", cost = 1e5)
+
+# Summary of model
+summary(svmfit)
+plot(svmfit, training_data2)
+```
+
+No training errors were made and only three support vectors were used. However, we can see from the figure that the margin is very narrow (because the observations that are **not** support vectors, indicated as circles, are very close to the decision boundary). It seems likely that this model will perform poorly on test data (i.e. *it's overfitting*). Let's try a smaller value of `cost`:
+
+```{r}
+# Fit model with cost of 1
+svmfit <- svm(class ~ ., data = training_data2, kernel = "linear", cost = 1)
+
+# Model summary
+summary(svmfit)
+plot(svmfit, training_data2)
+```
+
+Using `cost = 1`, we misclassify a training observation, but we also obtain a much wider margin and make use of seven support vectors. It seems likely that this model will perform better on test data than the model with `cost = 1e5`.
+
+# 9.6.2 Support Vector Machine
+
+In order to fit an SVM using a **non-linear kernel**, we once again use the `svm()` function. However, now we use a different value of the parameter kernel. To fit an SVM with a polynomial kernel we use `kernel="polynomial"`, and to fit an SVM with a radial kernel we use `kernel="radial"`. In the former case we also use the `degree` argument to specify a degree for the polynomial kernel, and in the latter case we use `gamma` to specify a value of $\gamma$ for the radial basis kernel.
+
+**Q. What is a Radial Kernel?**
+Recall a kernel expresses a measure of similarity between vectors. RBF kernel is equivalent to the inner product of two data points that have an infinite number of dimensions. It is the most commonly used kernel for SVMs.
+
+**Q. Polynomial or RBF kernel?**
+In practice, a polynomial kernel is less useful for efficiency (computational as well as predictive) performance reasons. The rule of thumb is: use linear SVMs (or logistic regression) for linear problems, and nonlinear kernels such as the Radial Basis Function kernel for non-linear problems.
+
+**Q. What if both linear and RBF kernel SVM would work equally well on a dataset?**
+Well we prefer the simpler, linear hypothesis? Think of Occam's Razor in this particular case. Linear SVM is a parametric model (All information is in the parameters), an RBF kernel SVM isn't, and the complexity of the latter grows with the size of the training set. 
+
+Let's generate some data with a non-linear class boundary:
+
+```{r}
+set.seed(1)
+
+# Generate non-linear data
+
+# Normal distribution (200 Observations)
+x <- matrix(rnorm(200*2), ncol = 2)
+
+# Less linearly separable
+x[1:100,] <- x[1:100,]+2
+x[101:150,] <- x[101:150,]-2
+
+# Vector of y class
+class <- c(rep(1,150),rep(2,50))
+nonlinear_data <- data.frame(x = x, class = as.factor(class))
+
+ggplot(nonlinear_data, aes(x.1, x.2, colour = factor(class))) +
+  geom_point()
+```
+
+See how one class is kind of stuck in the middle of another class? This suggests that we might want to use a **radial kernel** in our SVM. Now let's randomly split this data into training and testing groups, and then fit
+the training data using the `svm()` function with a radial kernel and $\gamma = 1$:
+
+**What is Gamma?**
+Gamma ($\gamma$) is the spread or size of the kernel and therefore the decision region: when $\gamma$ is low, the “curve” of the decision boundary is very low and thus the decision region is very broad. When $\gamma$ is high, the spread of the kernel is less pronounced and the decision boundary starts to be highly affected by individual data points, meaning that we *overfit* to our training data. $\gamma$ defines the influence of a single training example, or the similarity measure between two points. 
+
+Practical Guide to SVM Classification (*Including choosing the values for C (cost) and gamma*): https://www.csie.ntu.edu.tw/~cjlin/papers/guide/guide.pdf
+
+```{r}
+# Indexes for sample of 80 points - train-test split
+idx <- sample(1:nrow(nonlinear_data), 80)
+
+nonlinear_train <- nonlinear_data[-idx,]
+
+nonlinear_test <- nonlinear_data[idx, ]
+
+# RBF SVM model
+svmfit <- svm(class~., data = nonlinear_train, kernel = "radial",  gamma = 1, cost = 1)
+plot(svmfit, nonlinear_train)
+```
+
+Not too shabby! The plot shows that the resulting SVM has a decidedly non-linear boundary. We can see from the figure that there are a fair number of training errors in this SVM fit. If we increase the value of cost, we can reduce the number of training errors:
+
+```{r}
+# Increase cost, but risks overfitting
+svmfit <- svm(class ~ ., data = nonlinear_train, kernel = "radial", gamma = 1, cost = 1e5)
+plot(svmfit, nonlinear_train)
+```
+
+However, this comes at the price of a more irregular decision boundary that seems to be at risk of overfitting the data. We can perform cross-validation using `tune()` to select the best choice of $\gamma$ and cost for an SVM with a radial kernel:
+
+```{r}
+set.seed(1)
+# We can use tune to find the best choice of values that minimises classification error
+# Here we can see why "ranges" needs a list for the case of searching for multiple parameters
+tune_out <- tune(svm, class~., data = nonlinear_train, kernel = "radial",
+                ranges = list(cost = c(0.1,1,10,100,1000), gamma = c(0.5,1,2,3,4)))
+
+# Best model
+bestmod <- tune_out$best.model
+summary(bestmod)
+plot(bestmod, nonlinear_train)
+
+bestmod$gamma
+```
+
+Therefore, the best choice of parameters involves `cost = 1` and `gamma = 0.5`. We can plot the resulting fit using the `plot()` function, and view the test set predictions for this model by applying the `predict()` function to the test data.
+
+```{r}
+# Plot the best model
+plot(bestmod, nonlinear_train)
+
+# Confusion matrix (90% correctly classified)
+table(true = nonlinear_test$class, pred = predict(tune_out$best.model, newdata = nonlinear_test))
+```
+
+90% of test observations are correctly classified by this SVM. Not bad!
+
+# 9.6.3 ROC Curves
+
+The `ROCR` package can be used to produce ROC curves such as those we saw in lecture. We first write a short function to plot an ROC curve given a vector containing a numerical score for each observation, `pred`, and a vector containing the class label for each observation, `truth`:
+
+**Q. What is a ROC curve?**
+ROC curve (or AUC-ROC curve) is a performance measurement for the classification problems at various threshold settings. ROC (*Receiver Operating Characteristic*) is a probability curve and AUC (*Area Under the Curve*) represents the degree or measure of separability. It tells how much the model is capable of distinguishing between classes. Higher the AUC, the better the model is at predicting 0s as 0s and 1s as 1s. By analogy, the Higher the AUC, the better the model is at distinguishing between patients with the disease and no disease.
+The ROC curve is plotted with True Positive Rate against the False Positive Rate where TPR is on the y-axis and FPR is on the x-axis.
+
+```{r}
+# ROC curve (Receiver Operating Characteristic)
+library(ROCR)
+
+# Custom function to plot ROC 
+# which takes predictive probabilities and the true class, 
+# as well as unnamed  arguments (** in python)
+
+rocplot <- function(pred, truth, ...){
+   # Transforms the input data into a standardized format.
+   predob = prediction(pred, truth)
+   # Generate performance metrics.
+   perf = performance(predob, "tpr", "fpr")
+   # "..." means pass parameters to plot from function (unnamed arguments)
+   plot(perf, ...)} 
+
+```
+
+SVMs and support vector classifiers output class labels for each observation. However, it is also possible to obtain fitted values for each observation, which are the numerical scores used to obtain the class labels. For instance, in the case of a support vector classifier, the fitted value for an observation $X = (X_1,X_2, . . .,X_p)^T$ takes the form $\hat\beta_0 + \hat\beta_1X_1 + \hat\beta_2X_2 + . . . + \hat\beta_pX_p$.
+
+For an SVM with a non-linear kernel, the equation that yields the fitted value is given in (9.23) on p. 352 of the ISLR book. In essence, the sign of the fitted value determines on which side of the decision boundary the observation lies. Therefore, the relationship between the fitted value and the class prediction for a given observation is simple: if the fitted value exceeds zero then the observation is assigned to one class, and if it is less than zero than it is assigned to the other.
+
+In order to obtain the fitted (predicted) values for a given SVM model fit, we use `decision.values=TRUE` when fitting `svm()`. Then the `predict()` function will output the fitted values. Let's fit models using the $\gamma$ selected by cross-validation, and a higher value, which will produce a more flexible fit:
+
+```{r}
+# Different values of gamma for a RBF SVM
+svmfit_opt <- svm(class~., data = nonlinear_train, kernel = "radial", 
+                 gamma = 2, cost = 1, decision.values = TRUE)
+
+# Flexible model
+svmfit_flex <- svm(class~., data = nonlinear_train, kernel = "radial", 
+                  gamma = 50, cost = 1, decision.values = TRUE)
+```
+
+Now we can produce the ROC plot to see how the models perform on both the training and the test data:
+
+```{r}
+# Set graphical parameters 
+# Matrix of plots (2 across)
+par(mfrow = c(1,2))
+
+# attributes() - Access a objects attributes (in our case decision values, 
+# comparable to predictive probabilities)
+# predict(decision.values=True) - Logical controlling whether the decision values of all binary classifiers computed in multi-class classification shall be computed and returned. The ROC
+
+# Plot optimal parameter model's performance on training data (black line)
+fitted_opt_train <- attributes(predict(svmfit_opt, nonlinear_train, 
+                                       # Get the fitted values
+                                      decision.values = TRUE))$decision.values
+
+rocplot(fitted_opt_train, nonlinear_train$class, main = "Training Data")
+
+# Add more flexible model's performance to the plot (red line)
+fitted_flex_train <- attributes(predict(svmfit_flex, nonlinear_train,
+                                       decision.values = TRUE))$decision.values
+
+rocplot(fitted_flex_train, nonlinear_train$class, add = TRUE, col = "red")
+
+# Plot optimal parameter model's performance on test data
+fitted_opt_test <- attributes(predict(svmfit_opt, nonlinear_test, 
+                                     decision.values = TRUE))$decision.values
+
+rocplot(fitted_opt_test, nonlinear_test$class, main = "Test Data")
+
+# Add more flexible model's performance to the plot
+fitted_flex_test <- attributes(predict(svmfit_flex, nonlinear_test, 
+                                      decision.values = TRUE))$decision.values
+
+rocplot(fitted_flex_test, nonlinear_test$class, add = TRUE, col = "red")
+```
+
+## 9.7 Exercise 5
+
+We have seen that we can fit an SVM with a non-linear kernel in order to perform classification using a non-linear decision boundary. We will now see that we can also obtain a non-linear decision boundary by performing logistic regression using non-linear transformations of the features.
+
+(a) Generate a data set with $n = 500$ and $p = 2$, such that the observations belong to two classes with a quadratic decision boundary between them.
+
+```{r}
+set.seed(1)
+x1 <- runif(500) - 0.5
+x2 <- runif(500) - 0.5
+y <- 1 * (x1^2 - x2^2 > 0)
+```
+
+(b) Plot the observations, colored according to their class labels. Your plot should display $X_1$ on the $x$-axis and $X_2$ on the $y$-axis.
+
+```{r}
+```
+
+(c) Fit a logistic regression model to the data, using $X_1$ and $X_2$ as predictors.
+
+```{r}
+```
+
+(d) Apply this model to training data in order to obtain a predicted class label for each training observation. Plot the observations, colored according to the predicted class labels. The decision boundary should be linear.
+
+```{r}
+```
+
+(e) Now fit a logistic regression model to the data using non-linear functions of $X_1$ and $X_2$ as predictors.
+
+```{r}
+```
+
+(f) Apply this model to training data in order to obtain a predicted class label for each training observation. Plot the observations, colored according to the predicted class labels. The decision boundary should obvioulsy be non-linear.
+
+```{r}
+```
+
+(g) Fit a support vector classifier to the data with $X_1$ and $X_2$ as predictors. Obtain a class prediction for each training observation. Plot the observations, colored according to the predicted class labels.
+
+```{r}
+```
+
+(h) Fit a SVM using a non-linear kernel to the data with $X_1$ and $X_2$ as predictors. Obtain a class prediction for each training observation. Plot the observations, colored according to the predicted class labels.
+
+```{r}
+```
+
+(i) Comment on your results.

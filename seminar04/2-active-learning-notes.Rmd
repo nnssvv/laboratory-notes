@@ -1,0 +1,468 @@
+---
+title: "Visualizing and Understanding Active Learning"
+author: "Blake Miller"
+date: |
+  | `r format(Sys.time(), '%d %B %Y')`
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      fig.width=7, fig.height=3.5) 
+
+#install.packages("ggplot2")
+#install.packages("ggthemes")
+#install.packages("ggExtra")
+#install.packages("metR")
+library(ggplot2)
+library(ggthemes)
+library(ggExtra)
+library(metR)
+
+pallete <- c("#5f5f5f", "#125f8a")
+pallete_muted <- c("#ababab", "#8acbf0")
+pallete_unlabeled <- c("#e6e6e6", "#e1f2fb")
+red <- "#d55c5c"
+
+# Use theme to customize non-data elements of the plot.
+theme <- theme_minimal() + # Set ggplot2 theme
+        theme(axis.text=element_text(size=12),
+                axis.title=element_text(size=12),
+                plot.title = element_text(size=14),
+                plot.subtitle = element_text(size=12),
+                legend.title=element_blank(),
+                legend.position="bottom")
+```
+
+## Visualizing Active Learning with Simulated Data
+
+To illustrate how active learning can aid the efficiency of document annotation when classes are imbalanced, we generate a simple dataset that will facilitate visualization and provide a simple test of whether our active learner produces classifications that are close to Bayes optimal.
+
+We will generate data that are distributed bivariate normal given the class. For convenience, each distribution will have identical covariance matrices.
+
+```{r}
+# Covariance matrix for both class distributions
+# Covariance indicates the direction of the linear relationship between variables.
+# Correlation (direction + strength) is a function of covariance
+# We will use this to generate our data.
+S <- matrix(c(1, .7, .7, 5), 2)
+
+# Mean vectors for each class distribution.
+# The mean vector consists of the means of each variable .
+mu_1 <- c(1, 5)
+mu_2 <- c(2, 2)
+```
+
+To simulate class imbalance, we will sample 100 observations from the first bivariate normal distribution (for the positive class) and 900 from the second bivariate normal distribution (for the negative class). This results in a class balance of .1.
+
+```{r}
+#install.packages("MASS")
+#install.packages("mvtnorm")
+
+library(MASS)
+library(mvtnorm)
+
+set.seed(1)
+
+# Function which takes covarience matrix and mean vectors,
+# as defined in the cell above.
+
+# Note that why the parameter names are the same as variables, they
+# are not supplied as default argument.
+
+generate_data <- function(n_1, n_2, mu_1, mu_2, S) {
+  x_1 = mvrnorm(n_1, mu = mu_1, Sigma = S) # Simulate a Multivariate Normal Distribution
+  x_2 = mvrnorm(n_2, mu = mu_2, Sigma = S) 
+  # Sigma is the covarience matrix 
+  # mu is a vector of variable means
+  x <- rbind(x_1, x_2) # Combine the simulated distributions
+  # Generate y (class) labels
+  y <- c(rep("Positive", n_1), rep("Negative", n_2))
+  
+  data <- data.frame(x)
+  # Add column names
+  names(data) <- c('x_1', 'x_2')
+  # Set y as factor (categorical)
+  data$Class <- factor(y)
+  data
+}
+
+# Use our function to simulate a dataset
+# 100 Positive, 900 Negative (imbalanced problem)
+data <- generate_data(100, 900, mu_1, mu_2, S)
+```
+
+Let's visualize our data using a scatterplot.
+
+```{r}
+scatter <- ggplot(data=data, aes(x=x_1, y=x_2)) + # ggplot object
+  
+                  geom_point(aes(pch = Class, color = Class), # Add scatter plot
+                             data = data, size = 2, alpha=.7) +
+  
+                  scale_color_manual(values = pallete, name = "Class") + # Set display
+  
+                  labs(x = 'Feature 1', y = 'Feature 2') + # Set Labels
+  
+                  theme # Use the theme we defined earlier
+
+scatter
+```
+
+So we can visualize our randomly generated data alongside the probability density functions that we generated these data from, we can overlay our scatterplot with a **contour plot** of each density function that generated these data. A **contour plot** allows us to plot higher-dimensional data in 2 dimensions. Each contour line represents a slice of a three-dimensional plot at different values representing the relative likelihood given values of $x_1$ and $x_2$.
+
+To make this plot, we will need to create a 500 x 500 grid that is bounded by the ranges of the values of $x_1$ and $x_2$. This is essentially a grid of pixels on our plot. This will allow us to predict probabilities and classes for each cell in this grid using the density function `dmvnorm()` (we will store these in variables `positive` and `negative` below). Later, we will use this same grid to plot decision boundaries.
+
+```{r}
+# Create a data frame from all combinations of the supplied vectors or factors.
+# seq() generates a regular sequence from min to max of x vectors, of 500 obs.
+grid <- expand.grid(x_1=seq(min(data$x_1),
+                            max(data$x_1),
+                            length=500),
+                    
+                    x_2=seq(min(data$x_2),
+                            max(data$x_2),
+                            length=500))
+
+# Below, we use :: to denote a specific library for a functions.
+# cbind combines vectors/matrix/df
+# Add a "prob" column using the dmvnorm() to predict probabilities.
+positive <- cbind(grid, prob = mvtnorm::dmvnorm(grid, mean = mu_1, log=F, sigma = S)) 
+negative <- cbind(grid, prob = mvtnorm::dmvnorm(grid, mean = mu_2, sigma = S)) # log values
+
+# Print contour plot.
+contour <- scatter + # Our earlier scatter plot
+  
+  #  Visualise 3d surface in 2d
+  geom_contour(data=negative, aes(x=x_1, y=x_2, z=prob), color=pallete_muted[1]) + 
+  geom_contour(data=positive, aes(x=x_1, y=x_2, z=prob), color=pallete_muted[2]) + 
+  
+  # Add text to the contour lines (Prob column of positive/negative)
+  geom_text_contour(data=negative, aes(z = prob), color=pallete[1]) +
+  geom_text_contour(data=positive, aes(z = prob), color=pallete[2])
+
+contour
+```
+
+Assuming the conditional distributions $P(Y|X) \sim \mathcal{N}(\boldsymbol\mu,\,\boldsymbol\Sigma)$ with $\boldsymbol\Sigma_k = \boldsymbol\Sigma \,\,\forall k$ (data are assumed to be distributed multivariate normal given the classes and with identical covariance matrices), **linear discriminant analysis (LDA)** gives us a Bayes-optimal decision boundary.
+
+
+To estimate our Bayes optimal decision boundary, we train an LDA model using the data we generated. We then use this model to predict the class for every cell in the grid we made earlier. With the function `geom_contour()` in `ggplot2`, we plot the decision boundary using these predictions.
+
+**Q. What is Linear Discriminant Analysis?**
+Linear discriminant analysis is a supervised classification method that is is most commonly used as dimensionality reduction technique in the pre-processing step for pattern-classification . The goal is to project a dataset onto a lower-dimensional space with good class-separability in order avoid overfitting (“curse of dimensionality”) and also reduce computational costs.
+
+**Q. What is a Bayes-optimal decision boundary?**
+The Bayes optimal classifier is a probabilistic model that makes the most probable prediction (lowest possible test error) for a new example, given the training dataset.
+
+```{r}
+# LDA model
+lda <- lda(Class ~ ., data = data)
+
+# Use LDA to predict on grid data
+pred <- predict(lda, grid)
+
+# Construct a data frame to facilitate visualization in ggplot
+# Posterior (predictive) probabilities
+data_grid <- cbind(grid, as.data.frame(pred$posterior))
+
+# Predicted classes
+data_grid$class <- as.numeric(pred$class)
+```
+
+Here we plot the decision boundary estimated by LDA given the training data. Just by looking at this plot, it is clear that LDA does a very good job at classifying the data.
+
+```{r}
+# Plot decision boundary
+# Adding the boundary to our exisiting plot ("scatter")
+# aes() is aesthetic mappings
+scatter + 
+  geom_contour(data=data_grid,
+               # z = class to draw decision boundary
+               aes(x=x_1, y=x_2, z=class),
+               color=red, size=.5)
+```
+
+If we want to quantify model performance, we use the function `perf()` which measures  **precision** and **recall**. We can use **ten-fold cross-validation** to estimate test error.
+
+```{r}
+# User generated function to quantify model performance.
+
+# Generates a confusion matrix.
+perf <- function(pred, actual){
+  cm <- table(pred, actual)
+  tp <- cm[1,1]
+  fp <- sum(cm[1,]) - tp
+  fn <- sum(cm[,1]) - tp
+  list(p = tp / (tp + fp),
+      r =  tp / (tp + fn))
+}
+
+# Data for each fold of CV
+fold <- sample(1:10, nrow(data), replace=T)
+
+# Vector for stats for each fold of CV
+precision <- numeric(10)
+recall <- numeric(10)
+
+# Use loop with LDA model for cross validate metrics
+for (i in 1:10) {
+  mod <- lda(Class ~ ., data = data[fold == i, ])
+  pred <- predict(mod, data[fold != i, ])
+  p_r <- perf(pred$class, data[fold != i, 'Class']) 
+  # Performance metric t get precision and recall
+  # Add these figures to vectors.
+  precision[i] <- p_r$p
+  recall[i] <- p_r$r
+}
+
+# Concatenate and Print
+cat("\n Precision =", round(mean(precision), 2), 
+    "\n    Recall =", round(mean(recall), 2), "\n")
+```
+
+Alternatively, since we know the data-generating process, we can simply generate a large test set for a more precise estimate of generalization error. This option, however, is not usually available to us when using real data (unless gathering new data is extremely cheap).
+
+```{r}
+# Use our earlier function to generate data 
+# (same values as before, but bigger sample)
+test <- generate_data(1000, 9000, mu_1, mu_2, S)
+
+# Use predict with our lda model
+pred <- predict(lda, test)
+# get our performance matrix
+p_r <- perf(pred$class, test$Class)
+
+# Concatenate and print
+cat("\n Precision =", round(mean(precision), 2), 
+    "\n    Recall =", round(mean(recall), 2), "\n")
+```
+
+When we add back the contours of the data-generating densities, we notice that the decision boundary is not positioned at the intersections of the two contours. This is because our **class priors** $\pi_k$ are non-uniform due to **class imbalance**. If our priors were uniform (i.e. $\pi_k = \pi \,\, \forall k$), we would expect this decision boundary to be positioned at the intersection of the contours (try to edit the code to try this for yourself!). In other words, because negative examples are more likely, our decision boundary has been pulled slightly upward and to the left to avoid misclassifying negative examples.
+
+**Q. What is a class prior?**
+The class prior is an estimate of the probability that randomly sampling an instance from a population will yield the given class (regardless of any attributes of the instance). This reflect the imbalance of a class in our data.
+
+```{r}
+# Add the boundary to the contour plot.
+contour + 
+  geom_contour(data=data_grid,
+               aes(x=x_1, y=x_2, z=class),
+               color=red, size=.5)
+```
+
+## Uncertainty sampling
+
+For the sake of visualizing active learning, we will assume that all but 100 of the class labels are unknown. 
+
+*Uncertainty Sampling* is a strategy for identifying unlabeled items that are near a decision boundary in your current model, which over-samples unlabeled points that are closer to the decision boundary.
+
+```{r}
+# Indexes for "known" class labels
+idx <- sample(1:nrow(data), 100)
+data[idx, 'y_known'] <- as.numeric(data[idx, 'Class']) - 1 # outcome of 0 or 1 (class predictions)
+```
+
+As expected, since only 10% of observations are from the positive class, we have 90 negative examples and 10 positive examples in our "labeled" data.
+
+```{r}
+table(data$y_known)
+```
+
+For this example, we will select the next batch of documents to label using **uncertainty sampling**. Uncertainty sampling involves selecting an observation for labeling based on a measure of the uncertainty of a model's class prediction for that observation (over-sampling unlabeled items that are closer to the decision boundary). This measure of uncertainty can come in many forms, but for the sake of familiarity, we will use **logistic regression**.
+
+The predicted probabilities from a logistic regression model can be used as a measure of *model uncertainty* about the label of each observation in our *unlabeled* data. The logistic regression classifier will be most uncertain when the predicted probability is $.5$ (i.e. half way between either class label, without a clear decision). In this scenario, the classifier is indifferent as to whether the observation is positive or negative. To sample 20 unlabeled observations using this form of active learning, we would *query* or *select* observations for a human to label where $\hat{p}$ is closest to .5 (i.e. $|\hat{p}-.5|$).
+
+```{r}
+labeled <- data[!is.na(data$y_known),]
+unlabeled <- data[is.na(data$y_known),]
+
+mod <- glm(y_known ~ x_1 + x_2, data=labeled, family="binomial")
+pred <- predict(mod, unlabeled, type="response") # predicted probabilities#
+
+# Absolute value for predictive probabilities - 0.5
+sorted <- sort(abs(pred - .5), decreasing=FALSE, index.return=TRUE)
+
+pred[head(sorted$ix)] # Predicted probabilities closest to .5
+head(sorted$x) # Distance from .5
+
+# Indexes for queried points
+to_label <- unlabeled[sorted$ix[1:10],]
+indexes <- as.numeric(rownames(to_label))
+```
+
+In the plot below, we can see exactly where in the 2-dimensional feature space the observations we queried were. It turns out that these are also the points closest to the logit decision boundary. When comparing to the Bayes decision boundary computed before to the logit decision boundary, we see it is close but not an exact match.
+
+```{r, echo=FALSE}
+# Identify which unlabeled observations have been queried
+data$Queried <- "Not Queried"
+data[indexes,'Queried'] <- "Queried"
+
+# Draw logistic regression decision boundary
+pred_logit <- predict(mod, grid, type="response")
+
+# if > that 0.5, 1 otherwise 0 (predicted class)
+pred_logit <- ifelse(pred_logit > .5, 1, 0)
+
+# Add predicted class to grid
+logit_grid <- cbind(grid, class=pred_logit)
+
+# Plot the boundary
+ggplot(data=data[is.na(data$y_known),], aes(x=x_1, y=x_2)) +
+      geom_point(aes(size = Queried, alpha = Queried, color = Class, shape = Class)) +
+      scale_color_manual(values=pallete, name = "Class") + 
+      scale_size_manual(values=c(2,4)) +
+      scale_alpha_manual(values=c(.5,.8)) +
+      labs(x = 'Feature 1', y = 'Feature 2') +
+      theme + 
+      geom_contour(data=logit_grid,
+                   aes(x=x_1, y=x_2, z=class),
+                   color='black', size=.5) +
+      geom_contour(data=data_grid,
+                   aes(x=x_1, y=x_2, z=class),
+                   color=red, size=.5) + 
+      geom_text(aes(x=4, y=8.75, label="Logit Decision Boundary"),
+                color="black", size=3, angle=10) +
+      geom_text(aes(x=0, y=2.75, label="Bayes Decision Boundary"),
+                color=red, size=3, angle=15)
+```
+
+Active learning is an *iterative* process, so if we wanted to improve our classifier, we would simply repeat the above process after incorporating newly labeled observations until our model performs well enough for our purposes.
+
+Let's go ahead and try this. Will incorporating our newly "labeled" observations make our decision boundary closer to the Bayes decision boundary? Below, we will add the labels for each queried observation to `y_known` and query our next 20 observations to label.
+
+```{r}
+# NA for queried datapoints
+data[indexes, 'y_known'] <- as.numeric(data[indexes, 'Class']) - 1
+
+# NA == labeled (Easy to filter the DF for iterative process)
+labeled <- data[!is.na(data$y_known),]
+unlabeled <- data[is.na(data$y_known),]
+
+# Logistic model for unlabelled data
+mod <- glm(y_known ~ x_1 + x_2, data=labeled, family="binomial")
+# Predicted probabilities
+pred <- predict(mod, unlabeled, type="response") 
+
+ # Get the predicted probabilities closest to .5
+sorted <- sort(abs(pred - .5), decreasing=FALSE, index.return=TRUE)
+pred[head(sorted$ix)]
+head(sorted$x) # Distance from .5
+
+# Label the data points based on model
+to_label <- unlabeled[sorted$ix[1:10],]
+indexes <- as.numeric(rownames(to_label))
+```
+
+Let's make the same plot as before, displaying the new model's decision boundary and the observations that have been queried for the next iteration of active learning.
+
+```{r, echo=FALSE}
+# Identify which unlabeled observations have been queried
+data$Queried <- "Not Queried"
+data[indexes,'Queried'] <- "Queried"
+
+# Draw logistic regression decision boundary
+pred_logit <- predict(mod, grid, type="response")
+pred_logit <- ifelse(pred_logit > .5, 1, 0)
+logit_grid <- cbind(grid, class=pred_logit)
+
+# Plot the data and decision boundary
+ggplot(data=data[is.na(data$y_known),], aes(x=x_1, y=x_2)) +
+      geom_point(aes(size = Queried, alpha = Queried, color = Class, shape = Class)) +
+      scale_color_manual(values=pallete, name = "Class") + 
+      scale_size_manual(values=c(2,4)) +
+      scale_alpha_manual(values=c(.5,.8)) +
+      labs(x = 'Feature 1', y = 'Feature 2') +
+      theme + 
+      geom_contour(data=logit_grid,
+                   aes(x=x_1, y=x_2, z=class),
+                   color='black', size=.5) +
+      geom_contour(data=data_grid,
+                   aes(x=x_1, y=x_2, z=class),
+                   color=red, size=.5) + 
+      geom_text(aes(x=4, y=9.25, label="Logit Decision Boundary"),
+                color="black", size=3, angle=13.5) +
+      geom_text(aes(x=0, y=2.75, label="Bayes Decision Boundary"),
+                color=red, size=3, angle=15)
+```
+
+After incorporating our newly labeled observations, we can see that the logit decision boundary has moved closer to the Bayes decision boundary. This is because we now have more information about the positive and negative class, and have sampled observations to labeled in the *feature space* (the collections of features that are used to characterize your data) where we have either very little information, or where the probability that an observation is positive or negative is near .5. Active learning allows us to improve model performance faster when classes are imbalanced, that is, where observations from one particular class are relatively rare.
+
+## Active Learning and Class Imbalance
+
+The data generated above are **imbalanced** in this way: with 10% positive examples and 90% negative examples.
+
+```{r}
+# Checking imbalance in data
+counts <- table(data$Class)
+counts/sum(counts)
+```
+
+A real-world example of such a problem is hate speech detection for tweets. Fortunately, a very small fraction of tweets on Twitter contain hate speech. Unfortunately, because there are much more examples of non-hateful speech than hateful speech, hate speech detection is a challenging and costly problem.
+
+When labeling a training set for text classification, a common approach is to take a random sample from the population. The probability of randomly sampling a hateful tweet is low, so it is a lot more difficult for us to collect examples of hate speech in this way. Because of this, it is much more costly and time-consuming to build a training set for a hate speech classifier. We will continue later in this exercise with an example of hate speech detection, but for now we will illustrate how active learning can help us manage class imbalance using our toy dataset.
+
+Since we have generated these data, we know that if we were to randomly sample from the population, we would only sample one positive out of ten on average. In cases where we need lots of positive examples, this sampling scheme may prove too time consuming and costly. So how can active learning improve on random sampling. By sampling from the decision boundary (as we saw in the previous section) we are more likely to encounter rare positive cases.
+
+If we were to repeatedly sample using active learning, would we do better than .10? Let's see. Below, we label one observation at a time choosing the observation according to its proximity to $\hat{p} = .5$. At each step, we calculate the positive class balance. 
+
+```{r}
+# Using our data generation function
+data <- generate_data(1000, 9000, mu_1, mu_2, S)
+
+# Sample 100 data points
+idx <- sample(1:nrow(data), 100)
+data[idx, 'y_known'] <- as.numeric(data[idx, 'Class']) - 1 # outcome of 0 or 1
+
+balances <- numeric(100) # store pos. class balance for each step
+
+# Loop to iterate over data with logit model
+# This is where filtering by NA is particularly useful.
+for (i in 1:100) {
+  labeled <- data[!is.na(data$y_known),]
+  unlabeled <- data[is.na(data$y_known),]
+  
+  # calculate class balance
+  counts <- table(labeled$y_known)
+  balance_table <- counts/sum(counts)
+  balances[i] <- balance_table[2]
+  
+  # sample new observation closest to p_hat = .5
+  mod <- glm(y_known ~ x_1 + x_2, data=labeled, family="binomial")
+  pred <- predict(mod, unlabeled, type="response") # predicted probabilities
+  sorted <- sort(abs(pred - .5), decreasing=FALSE, index.return=TRUE)
+  to_label <- unlabeled[sorted$ix[1],]
+  index <- as.numeric(rownames(to_label))
+  data[index, 'y_known'] <- as.numeric(data[index, 'Class']) - 1
+}
+```
+
+Now that we have labeled observations using active learning and calculated the positive class balance at each step, we can visualize how the positive class balance changes as we continue to label observations. Because we know that 10% of observations in the population are positive, if we were random sampling instead of using active learning, we would expect a constant balance of .10 throughout the labeling process.
+
+```{r}
+ggplot() +
+  geom_bar(aes(x=1:100, y=balances), stat="identity", width=1, alpha=.8) +
+  geom_hline(yintercept=.1, linetype="dashed", color = "red") +
+  geom_text(aes(50, .1, label = "Expected Random Sample Balance", vjust = -1),
+            color="white", size=3) +
+  labs(x = 'Number of Observations Sampled', y = 'Positive Class Balance') +
+  theme_bw()
+```
+
+Let's compare this procedure to random sampling. 
+
+```{r}
+# Table of 200 labeled observations after labeling 100 actively
+labeled <- data[!is.na(data$y_known),]
+counts <- table(labeled$y_known)
+counts/sum(counts)
+
+# Randomly sample 200 observations from the population
+indexes <- sample(1:nrow(data), 200)
+random <- data[indexes,]
+y_known <- as.numeric(random$Class) - 1
+counts_random <- table(y_known)
+counts_random/sum(counts_random)
+```
+
+The results of this simulation demonstrate how active learning can dramatically improve class imbalance when creating a training set. Using active learning more than doubled the number of observations from the positive class.

@@ -1,0 +1,372 @@
+---
+title: 'Problem Set 3: Hyperparameter Search, Decision Trees, and Regularization'
+author: "<YOUR CANDIDATE NUMBER HERE>"
+date: |
+  | `r format(Sys.time(), '%d %B %Y')`
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#install.packages("kknn")
+library(kknn)
+set.seed(1)
+```
+
+## 1. Hyperparameter search
+
+`knn_digits.RData` contains the feature matrix and target values of the well-known MNIST digit recognition database. Using the K-nearest neighbors classifier, we will train and evaluate a model to automatically classify hand-written digits into one of 10 classes $y \in {0 ... 9}$. The features in this dataset are flattened matrices of greyscale pixel intensities. Below, we load in the data from the `knn_digits.RData` which contains `digit_data`, the grayscale values for all 64 pixels in each small handwritten digit image, and `digit_target`, the corresponding outcome $y \in {0 ... 9}$. Using the `image()` function, I have plotted the first 10 observations in the data, each corresponding to the digits 0-9.
+
+```{r, fig.width=2.25, fig.height=2.75}
+# Load in digits data
+load("knn_digits.RData")
+
+for (i in 1:10) {
+  digit <- matrix(digit_data[i,], 8, 8)
+  image(digit[,nrow(digit):1], col = grey(seq(0, 1, length = 64)))
+}
+```
+
+In this exercise, we will use weights for our KNN classifier. These weights are defined by kernel functions that decrease the weight of neighbors that are far away and increase the weight of neighbors that are close (see lecture 4). Instead of using the `knn()` function in the `class` library, we will use the `kknn()` function in the `kknn` library (The extra k is for kernel. Can you believe?). `kknn()` works more like `glm()` than the `knn()` function. It takes in two data frames (train and test) and uses formulas (the ones with `~`). Below is a quick example of how to use kknn with $k=10$ and a triangular kernel:
+
+```{r}
+# Digit data to data frame
+digit_df <- data.frame(digit_data)
+# Target as factor
+digit_df$digit <- as.factor(digit_target)
+
+# First 500 obs (df is 1797)
+test <- 1:500
+digit_test <- digit_df[test, ]
+digit_train <- digit_df[-test, ]
+
+## Weighted Knn 
+# Performs k-nearest neighbor classification of a test set using a training set.
+mod <- kknn(digit ~ ., digit_train, digit_test,
+	kernel = "triangular", k=10)
+
+# Get the class predictions (rather than probabilities)
+fit <- fitted(mod)
+
+# Confusion matrix
+table(digit_test$digit, fit)
+
+# Misclassification error 
+# True values not the same as fitted
+mean(digit_test$digit != fit)
+```
+
+a) We'll begin by searching for the best model specification using grid search. Fit a model with each combination of hyperparameters in the grid below. Populate the cells with misclassification error rate (estimated using 10-fold CV). **Bold** your best model(s) in the table below.
+
++---------------------+----------+----------+----------+----------+
+|                     | k=1      | k=5      | k=10     | k=100    |
++---------------------+----------+----------+----------+----------+
+| Rectangular Kernel  |  0.0276  |  0.0245  |  0.0330  |  0.1117  |
++---------------------+----------+----------+----------+----------+
+| Triangular Kernel   |  0.0276  |  0.0268  |  0.0250  |  0.0473  |
++---------------------+----------+----------+----------+----------+
+| Epanechnikov Kernel |  0.0276  |  0.0261  |**0.0241**|  0.0519  |
++---------------------+----------+----------+----------+----------+
+| Gaussian Kernel     |  0.0276  |  0.0251  |  0.0273  |  0.0464  |
++---------------------+----------+----------+----------+----------+
+
+```{r}
+# Number of neighbors
+K <- c(1, 5, 10, 100)
+# Choice of kernels
+kernels <- c("rectangular", "triangular", "epanechnikov", "gaussian")
+# Numbers between 1-10, length of data (1297), sampling with replacement
+folds <- sample(1:10, nrow(digit_train), replace = TRUE)
+
+# for kernel type in list ...
+for (kernel in kernels) {
+  # for value of k ...
+  for (k in K) {
+    # vector to store error 
+    cv <- numeric(10)
+    # for each fold ...
+    for(j in 1:10){
+      # knn model that subsets the data into 10ths, training data where index corresponds to j,
+      # test data where other values. So there is different data in each fold.
+      # Values for kernel and k provided by outer loops
+      mod <- kknn(digit ~ ., digit_train[folds!= j,], digit_train[folds == j,], kernel = kernel, k=k)
+      # Extract fitted values from model
+      fit <- fitted(mod)
+      # Mean squared error for fold
+      cv[j] <- mean(digit_train[folds==j,]$digit != fit)
+    }
+    # Overall error for fold
+    error <- mean(cv)
+    # paste concatenate vectors after converting to character.
+    # Output each model, parameters, and error.
+    print(paste("k=", k, " kernel: ", kernel, ", error: ", error, sep=""))
+  }
+}
+```
+
+b) Perform a randomized hyperparameter search of 16 models using the values defined below. Report misclassification error rate (estimated using 10-fold CV) and the randomly sampled hyperparameter values for each. Report your best four models. *Hint: use `sample()`*
+
+```{r}
+K <- c(1:100)
+# Different kernels to try
+kernels <- c("rectangular", "triangular", "epanechnikov", "biweight",
+             "triweight", "cos", "inv", "gaussian", "rank", "optimal")
+# Grid of parameters
+parameters <- expand.grid(kernels = kernels, K = K)
+
+# Random selection of 16 combinations from grid
+parameters_sample <- parameters[sample(nrow(parameters), 16), ]
+
+# For 1 in run of 1-16 ...
+for (i in 1:16) {
+  # Vector for CV error
+  cv <- numeric(10)
+  # For each fold ...
+  for(j in 1:10){
+    # Random value of K (0-100) from sample
+    k <- parameters_sample$K[i]
+    # Get kernel as string/characters from sample
+    kernel <- as.character(parameters_sample$kernels[i])
+    # Pass values to knn as before
+    mod <- kknn(digit ~ ., digit_train[folds!=j,], digit_train[folds==j,], kernel = kernel, k = k)
+    # Extract fitted values from model
+    fit <- fitted(mod)
+    # Add error
+    cv[j] <- mean(digit_train[folds==j,]$digit != fit)
+  }
+  # Average error from each fold
+  error <- mean(cv)
+  # Print the form and error of each model
+  print(paste("k=", k, " kernel: ", kernel, ", error: ", error, sep=""))
+}
+```
+
++-----+-------------+----------+
+| *K* | *kernel*    | *error*  |
++-----+-------------+----------+
+| 38  | triweight   | 0.0265   |
++-----+-------------+----------+
+| 10  | optimal     |**0.0232**|
++-----+-------------+----------+
+| 41  | biweight    | 0.0274   |
++-----+-------------+----------+
+| 13  | cos         | 0.0275   |
++-----+-------------+----------+
+
+c) Comment on your results. Did you find a better model with randomized search or grid search? Why do you think this is?
+
+*I found a better model with randommized search. Randomized search can help us explore a larger range of hyperparameter values and in this case it turns out that we found a better model using the "optimal" kernel, which was not an option in the grid search. That being said, the models found in random and grid search performed quite similarly. We could perhaps find a better model if we searched more random combinations of hyperparameters or if we included more values in our grid search.*
+
+d) In 3-5 sentences, describe two advantages of randomized search compared to grid search.
+
+- *Computational cost of grid search is high; as number of hyperparameters increases, the curse of dimensionality becomes more of an issue. Randomized search can be given a computational budget, allowing for exploration of hyperparameter space without the cost of a brute-force search.*
+- *Randomized search does not have to be discretized; can find optimal values that might need a much more granular set of discretized values in grid search.*
+- *Randomized search can represent hyperparameters as random variables.*
+
+
+e) In 1-2 sentences, describe the main advantage of model-based hyperparameter search compared to grid and random search?
+
+- *Model-based approaches can make use of information from prior searches to inform where in the hyperparameter space to search next.*
+- *Computational cost is considerably less than grid search when there are a large number of hyperparameters; Can be less computationally costly because the search is targeted, less likely to sample feature values similar to previously-sampled values.*
+
+## 2. Tree Classification
+
+There is no R coding required for this question. You can choose to either 1) write out the answers on a separate piece of paper and submit a photograph along with your Rmd file on Moodle, or optionally 2) write your answers in \LaTeX (if you know it).
+
+Tree-based methods of classification involve a series of binary splits made in a top-down greedy fashion. At each the tree algorithm selects a split that maximally reduces a node impurity measure.
+
+When a parent node $P$ with $n_P$ observations is split into two children nodes $L$ and $R$ (left and right) with $n_L$ and $n_R$ observations, respectively, the quality of split is computed as the quality of the candidate split---a weighted average of the node purity measure, $Q(\cdot)$, in the right and left branches $\frac{n_L}{n_P}Q(L)+\frac{n_R}{n_P}Q(R)$ subtracted from the node purity measure of the parent split, $Q(P)$:
+
+$$L(\text{ split } P \text{ into } L, R) = Q(P) - \left(\frac{n_L}{n_P}Q(L)+\frac{n_R}{n_P}Q(R)\right)$$
+
+The node purity measure $Q(\cdot)$ can be defined in many ways, but in this problem we will look specifically at gini, cross-entropy, and misclassification error. We define misclassification error as they do in Equation 8.5 in the book (page 312) as $E = 1 - \underset{k}{max}(\hat{p})$
+
+a. In the table below, we see two candidate splits (Split 1 and Split 2), and the count of observations from each class $C_1$ and $C_2$ for each branch---left (L) or right (R)---resulting from that split. Using these counts, calculate the class proportions $p_1$ and $p_2$. Using these proportions, calculate gini and misclassification error for each branch.
+
+Split      Branch   $C_1$   $C_2$      $p_1$   $p_2$        Gini       Misclassification Error
+--------   ------   -----   --------   -----   ----------   --------   ------------------------
+Parent     P        20      20         0.5     0.5          0.5        0.5 
+Split 1    L        10      20         0.33    0.67         0.444      0.33
+Split 1    R        10      0          1.0     0.0          0.0        0.0 
+Split 2    L        15      5          0.75    0.25         0.375      0.25
+Split 2    R        5       15         0.25    0.75         0.375      0.25
+---------  -----    -----   ---------  -----   ----------   ---------  ------------------------
+
+b. Evaluate the quality of Split 1 and Split 2---$L(\text{Split 1})$ and $L(\text{Split 2})$---using gini and misclassification error for $Q(\cdot)$. What is the optimal split according to each measure of impurity? How does gini compare to misclassification error? Why might one prefer gini over misclassification error?
+
+*Use these formulas to fill in the table:*
+
+$$\text{Gini}=\sum_{k=1}^{K}\hat{p}_{mk}(1-\hat{p}_{mk})$$
+$$\text{M.E.}=1-\underset{k}{max}(\hat{p}_{mk})$$
+
+*Quality of Split 1:*
+$$\text{Gini}=0.5-\frac{30}{40}(0.444)+\frac{10}{40}(0.0)=0.167$$
+$$\text{M.E.}=0.5-\frac{30}{40}(0.333)+\frac{10}{40}(0.0)=0.250$$
+
+*Quality of Split 2:*
+
+$$\text{Gini}=0.5-\frac{20}{40}(0.375)+\frac{20}{40}(0.375)=0.125$$
+$$\text{M.E.}=0.5-\frac{20}{40}(0.25)+\frac{20}{40}(0.25)=0.250$$
+
+*Gini indicates that Split 2 is the optimal split. Misclassification error indicates that neither split is optimal.*
+
+*Gini (and cross-entropy) are more sensitive measures to node purity. Both gini and cross-entropy give a measure of the total variance across the $K$ classes, by taking into account every class that occurs in the region. In contrast, misclassification error only considers the most commonly occurring class in the region, but not information about the other classes in the region.*
+
+*While misclassification error fails to identify a difference in quality between the two splits, gini adequately discriminates between them, correctly identifying the better split.*
+
+## 3. Regularization short questions
+
+For a-c indicate which of the following are correct:
+
+\begin{enumerate}
+  \item Will have better performance due to increased flexibility when its increase in bias is less than its decrease in variance.
+  \item Will have better performance due to increased flexibility when its increase in variance is less than its decrease in bias.
+  \item Will have better performance due to decreased flexibility when its increase in bias is less than its decrease in variance.
+  \item Will have better performance due to decreased flexibility when its increase in variance is less than its decrease in bias.
+\end{enumerate}
+
+a. Ridge regression relative to least squares (choose from answers above):
+
+*The answer is 3. The lasso will be a sparser model than least squares. It will reduce variance and thus decrease the chance of overfitting. As long as the sparser model does not increase bias more than this decrease in variance, it will do better than least squares.*
+
+b. Non-linear methods (e.g. polynomial regression) relative to least squares (choose from answers above):
+
+*The answer again is 3 for the same reasons in a)*
+
+c. The lasso, relative to least squares (choose from answers above):
+
+*The answer is 2. Non-linear methods are more flexible than least squares and will do better than OLS if the assumption of linearity is violated. A flexible model will have more variance but will be better at approximating a non-linear functional form. Because a linear model will not fit non-linear data well (it will have high bias), non-linear methods will perform better than least squares when this bias is reduced more than the increase in variance.*
+
+d. What is the goal of regularization? How is this goal accomplished in linear models and tree models? 
+
+*The goal of regularization is to reduce variance by reducing the complexity of a model. For lasso and ridge regression, this is accomplished with a penalty term $\lambda$ which penalizes large coefficient values. This shrinks some coefficients to exactly zero (lasso; performing variable selection) or shrinks some coefficients toward zero (ridge). Tree methods have a similar parameter $\alpha$ that penalizes large trees (the number of terminal nodes $|T|$). At higher levels of $\alpha$ we will prune more branches of the tree resulting in a tree model with lower variance.*
+
+## 4. Sentiment analysis using LASSO
+
+Sentiment analysis is a method for measuring the positive or negative valence of language. In this problem, we will use movie review data to create scale of negative to positive sentiment ranging from 0 to 1. 
+
+In this problem, we will do this using a logistic regression model with $\ell_1$ penalty (the lasso) trained on a corpus of 25,000 movie reviews from IMDB.
+
+First, lets install and load packages.
+
+```{r, warning=FALSE, message=FALSE}
+#install.packages("doMC")
+#install.packages("glmnet")
+#install.packages("quanteda")
+#install.packages("readtext")
+
+library(doMC)
+library(glmnet)
+library(quanteda)
+library(readtext)
+```
+
+In this first block, I have provided code that downloads, extracts, and preprocesses these data into a matrix of term counts (columns) for each document (rows). Each document is labeled 0 or 1 in the document variable `sentiment`: positive or negative sentiment respectively.
+
+So we only have to run this computationally expensive block once, we use `saveRDS` to serialize the document feature matrix (save to disk). If your machine has trouble running this code, you can download the dfm files directly from [GitHub](https://github.com/lse-my474/lse-my474.github.io/tree/master/data).
+
+```{r}
+
+if (!file.exists("aclImdb_v1.tar.gz")) {
+  download.file("https://ai.stanford.edu/~amaas/data/sentiment/aclImdb_v1.tar.gz", "aclImdb_v1.tar.gz")
+  untar("aclImdb_v1.tar.gz")
+}
+
+## load the raw corpus
+pos_train <- readtext("aclImdb/train/pos/*.txt")
+neg_train <- readtext("aclImdb/train/neg/*.txt")
+pos_test <- readtext("aclImdb/test/pos/*.txt")
+neg_test <- readtext("aclImdb/test/neg/*.txt")
+
+for (N in c(3125, 6250, 12500)) {
+  filename <- paste(N, "_dtm.rds", sep="")
+  if (!file.exists(filename)) {
+    train <- rbind(pos_train[1:N,], neg_train[1:N,])
+    test <- rbind(pos_test[1:N,], neg_test[1:N,])
+    train$doc_id <- paste("train/", train$doc_id, sep='') ## train prefix in doc id
+    test$doc_id <- paste("test/", test$doc_id, sep='') ## test prefix in doc id
+    
+    texts <- rbind(train, test) # combine texts from train and test folders
+    sentiment <- rep(c(rep(1, N), rep(0, N)), 2) # sentiment labels
+    
+    corpus <- corpus(texts) # create a corpus
+    docvars(corpus, "sentiment") <- sentiment # add sentiment outcome to corpus
+    dfm <- dfm(corpus) # create features of word counts for each document
+    dfm <- dfm_trim(dfm, min_docfreq = N/50) # remove word features occurring < N/50 docs
+    saveRDS(dfm, filename) # save to disk so we don't have to compute in future
+  }
+}
+```
+
+Below is starter code to help you properly train a lasso model using the `.rds` files generated in the previous step. As you work on this problem, it may be helpful when troubleshooting or debugging to reduce `nfolds` to 3 or change N to either 3125 or 6250 to reduce the time it takes you to run code. You can also choose a smaller N if your machine does not have adequate memory to train with the whole corpus.
+
+```{r}
+# change N to 3125 or 6250 if computation is taking too long
+# to just look at a portion of the data.
+N <- 3125
+
+# Write a single R object to a file, and to restore it.
+dfm <- readRDS(paste(N, "_dtm.rds", sep=""))
+tr <- 1:(N*2) # indexes for training data
+te <- (N*2+1):nrow(dfm)
+
+registerDoMC(cores=5) # trains all 5 folds in parallel (at once rather than one by one)
+
+# Train the model
+mod <- cv.glmnet(dfm[tr,], dfm$sentiment[tr], nfolds=5, parallel=TRUE, family="binomial", type='class')
+```
+
+a. Plot misclassification error for all values of $\lambda$ chosen by `cv.glmnet`. How many non-zero coefficients are in the model where misclassification error is minimized? How many non-zero coefficients are in the model one standard deviation from where misclassification error is minimized? Which model is sparser?
+
+```{r}
+# Plot the lambda/error to get values of lambda
+plot(mod)
+print(mod)
+```
+
+*There are 1440 non-zero coefficients in the minimum lambda model and 1006 in the 1 s.e. model. The 1 s.e. model is sparser because it has fewer non-zero coefficients due to having a higher value of lambda.*
+
+b. According to the estimate of the test error obtained by cross-validation, what is the optimal $\lambda$ stored in your `cv.glmnet()` output? What is the CV error for this value of $\lambda$? *Hint: The vector of $\lambda$ values will need to be subsetted by the index of the minimum CV error.*
+
+```{r}
+# Get minimum lambda
+lam_min <- which(mod$lambda == mod$lambda.min)
+lam_min
+# Get error
+cv_min <- mod$cvm[lam_min]
+cv_min
+```
+
+c. What is the test error for the $\lambda$ that minimizes CV error? What is the test error for the 1 S.E. $\lambda$? How well did CV error estimate test error?
+
+```{r}
+# Predict using minimum lambda
+pred_min <- predict(mod, dfm[te,], s="lambda.min", type="class")
+# Error
+mean(pred_min != dfm$sentiment[te])
+
+# Lambda 1 se from lambda
+lam_1se <- which(mod$lambda == mod$lambda.1se)
+pred_1se <- predict(mod, dfm[te,], s="lambda.min", type="class")
+mean(pred_1se != dfm$sentiment[te])
+```
+
+*C.V. error estimated test error very closely.*
+
+d. Using the model you have identified with the minimum CV error, identify the 10 largest and the 10 smallest coefficient estimates and the features associated with them. Do they make sense? Do any terms look out of place or strange? In 3-5 sentences, explain your observations. *Hint: Use `order()`, `head()`, and `tail()`. The argument `n=10` in the `head()`, and `tail()` functions will return the first and last 10 elements respectively.*
+
+```{r}
+beta <- mod$glmnet.fit$beta[,lam_min]
+ind <- order(beta)
+
+# 10 highest and lowest
+head(beta[ind], n=10)
+tail(beta[ind], n=10)
+```
+
+*The largest magnitude positive and negative coefficients overall make a good deal of sense. I see that the number eight is an important feature, which might be due to a rating out of ten by the reviewer. The word "troubled" stands out as well. This could be related to the importance of conflict in good story-telling. Overall, the weights for each of these terms provide a sanity check that our model is capturing sentiment.*
