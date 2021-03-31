@@ -1,0 +1,401 @@
+---
+title: "Problem Set 4: Support Vector Machines"
+author: "Sian Brooke"
+date: |
+  | `r format(Sys.time(), '%d %B %Y')`
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+set.seed(1)
+```
+
+1. This question makes use of replication data for the paper [Ex Machina: Personal Attacks Seen at Scale](https://arxiv.org/abs/1610.08914) by Ellery Wulczyn, Nithum Thain, and Lucas Dixon. The paper introduces a method for crowd-sourcing labels for personal attacks and then draws several inferences about how personal attacks manifest on Wikipedia Talk Pages. They find that "the majority of personal attacks on Wikipedia are not the result of a few malicious users, nor primarily the consequence of allowing anonymous contributions from unregistered users."
+
+We will use their data and SVM models to identify personal attacks. Below is code to get you started.
+
+```{r, warning=FALSE, message=FALSE}
+#install.packages("quanteda")
+#install.packages("e1071")
+
+library(quanteda)
+library(e1071)
+
+texts <- read.csv('attacks.csv', stringsAsFactors=F)
+texts$attack <- factor(texts$attack)
+
+corpus <- corpus(texts, text_field="comment") # create a corpus
+dfm <- dfm(corpus) # create features of word counts for each document
+dfm <- dfm_trim(dfm, min_docfreq = 5) # remove word features occurring in < 5 docs
+
+tr <- 1:1000 # Indexes for training data
+te <- 1001:1300 # Indexes for test data
+
+mod <- svm(x=dfm[tr,], y=factor(texts$attack[tr]),
+           kernel="linear", cost=10)
+```
+
+   a) Use the function `tune()` to perform a grid search of different values of C (choose a wide range of values, say 1, 5, 10, 50, 75, 100, 300, and 500, but do not feel the need to limit yourself to this). For your best model, report training and test error in the form of precision, recall, and accuracy. Comment on your results.
+
+```{r}
+set.seed(1)
+
+# Potential values for c/cost parameters
+c_values  <- c(1, 2, 5, 10, 25, 50, 75, 100, 250, 500)
+
+# Use tune to search to the 'best' value of the cost parameter from
+# a list of candidate values
+#   x = Document feature matrix
+#   y = Personal attack y/n
+tune_out <- tune(svm, train.y = factor(texts$attack[tr]), 
+                 train.x = dfm[tr,], kernel = "linear", 
+                ranges = list(cost = c_values))
+
+# Extract best model from output of tuning
+best_model <- tune_out$best.model
+
+# Use the model to predict on test data.
+preds <- predict(best_model, dfm[te,])
+
+# Generate confusion matrix
+confusion <- table(Predicted = preds, Truth = texts$attack[te])
+
+precision <- confusion[1,1]/(confusion[1,1]+ confusion[1,2])
+recall <- confusion[1,1]/(confusion[1,1]+confusion[2,1])
+accuracy <- (confusion[1,1]+confusion[2,2])/sum(confusion)
+
+# Print results
+paste("Precision:", round(precision, 3))
+paste("Recall:", round(recall, 3))
+paste("Accuracy:", round(accuracy, 3))
+```
+
+
+   b) How many support vectors are there in your model?
+
+```{r}
+paste("Number of Support Vectors:", summary(best_model)[16])
+```
+
+   c) Look at the documents with the ten highest and lowest coefficients. What do the coefficients represent? Comment on any patterns you see in these documents.
+   
+```{r}
+library(knitr)
+
+# Data frame of the comments that are support vectors
+svm.df <- data.frame(
+  vector = texts$comment[tr][best_model$index],
+  coeffs = best_model$coefs,
+  # False because its actual text comments,
+  # not a categorical variable.
+  stringsAsFactors = F
+)
+
+
+# Documents with 10 highest coefficients
+highest <- head(svm.df[order(-svm.df$coeffs), ]$vector, 10)
+# Documents with 10 lowest coefficients
+lowest <- tail(svm.df[order(-svm.df$coeffs), ]$vector, 10)
+
+## What are the coefficients?
+
+#   The coefficients are equal to the models weights / 
+#   parameters / features for classifying data.
+
+#   A linear SVM creates a hyperplane that uses support vectors to 
+#   maximize the distance between the two classes. The weights obtained 
+#   from svm$coeffs represent the vector coordinates which are 
+#   orthogonal to the hyperplane and their direction indicates the 
+#   predicted class. The absolute size of the coefficients in relation 
+#   to each other can then be used to determine feature importance 
+#   for the data separation task.
+
+#   The top & bottom feature coefficients makes the mystery behind 
+#   what the linear SVM classifier has learnt more transparent.
+
+```
+
+
+   d) Fit a polynomial SVM of degree 3. Perform a grid search for C. For your best model, report training and test error in the form of precision, recall, and accuracy. Do these measures differ appreciably from the linear SVM? Why/why not?
+
+```{r}
+# Tune  poly model with degree 3 (same range as before)
+poly_tune_out <- tune(svm, train.y = factor(texts$attack[tr]), 
+                 train.x = dfm[tr,], kernel = "polynomial", 
+                degree = 3, ranges = list(cost = c_values))
+
+# Access best model
+best_model <- poly_tune_out$best.model
+
+# Predicted values using best model
+preds <- predict(best_model, dfm[te,])
+
+# Confusion Matrix
+confusion <- table(Predictions = preds, True = texts$attack[te])
+
+precision <- confusion[1,1]/(confusion[1,1]+ confusion[1,2])
+recall <- confusion[1,1]/(confusion[1,1]+confusion[2,1])
+accuracy <- (confusion[1,1]+confusion[2,2])/sum(confusion)
+
+confusion
+paste("Precision:", round(precision, 3))
+paste("Recall:", round(recall, 3))
+paste("Accuracy:", round(accuracy, 3))
+
+```
+
+
+2. For each of the following datasets from the `mlbench` package: 
+   - Generate 100 observations. Plot and comment on the functional form of the ideal decision boundary (1 sentence).
+   - Find the best svm model for linear, polynomial, and radial SVMs. Use the function `tune()` to perform a grid search of the relevant hyperparameters defined in the code chunk below.
+   - Report 10-fold CV error, and the relevant hyperparameter values for the best linear, polynomial, and radial models.  *(Hint: the `tune()` object contains a data frame of the 10-fold CV error and the hyperparameter values for each model in the grid search under `performances`. You can access this data frame with the `$` operator in the same way we accessed the best model in the SVM lab.)*
+   - Plot decision boundaries of the best linear, polynomial, and radial models.
+   - Compare the performance of the different kernels. Explain why you do or do not see any differences in performance across each kernel (3-5 sentences).
+
+```{r}
+library(mlbench)
+library(e1071)
+
+# Function that tunes models for different kernels and data sets
+# and returns the best model and prints its performance in cross-validation
+
+svm_select <- function(train.x, train.y, kernel.choice, ...) {
+   
+  # Set up training data
+  training_data <- data.frame(x = train.x, class = as.factor(train.y))
+  
+  # Tuned model
+  # "..." is any other params that can be passed to tune
+  tune_out <- tune(svm, train.x = train.x, train.y = train.y,
+                   kernel = kernel.choice, 
+                   ranges = list(cost = c(.0001, .01, 1, 10, 100), ...))
+      
+   # Print information about the best model's performance
+   print(paste("OPTIMUM PARAMS:", kernel.choice))
+   print(paste("Cost:", tune_out$performances$cost[which.min(tune_out$performances$error)]))
+   
+   if (kernel.choice == "radial"){
+     print(paste("Gamma:", tune_out$performances$gamma[which.min(tune_out$performances$error)]))
+   }
+   if (kernel.choice == "polynomial"){
+     print(paste("Degree:", tune_out$performances$degree[which.min(tune_out$performances$error)]))
+   }
+   print(paste("10-fold CV Error:", mean(tune_out$performances$error)))
+   
+   # Use best parameters to create the best model and return it
+   mod_best <- svm(class~., data = training_data, kernel = kernel.choice, 
+                   cost = tune_out$best.parameters$cost)
+   return(mod_best)
+}
+```
+
+   a) `mlbench.circle()`
+
+```{r, warning=FALSE}
+set.seed(123)
+circle <- mlbench.circle(100, 2)
+plot(circle)
+```
+
+
+```{r, warning=FALSE}
+# Params
+degree.choice <- 2:6
+gammas.choice <- c(.01, .1, .5, 1, 5, 10)
+
+# Data
+circle.x = circle$x
+circle.y = circle$classes
+
+# linear kernel
+circle_linear_mod <- svm_select(circle.x, circle.y, "linear")
+plot(circle_linear_mod, data.frame(x = circle.x, class = as.factor(circle.y)))
+
+# polynomial kernel
+circle_poly_mod <- svm_select(circle.x, circle.y, "polynomial", degree = degree.choice)
+plot(circle_poly_mod, data.frame(x = circle.x, class = as.factor(circle.y)))
+
+# radial kernel
+circle_radial_mod <- svm_select(circle.x, circle.y, "radial", gamma = gammas.choice)
+plot(circle_radial_mod, data.frame(x = circle.x, class = as.factor(circle.y)))
+
+```
+
+
+   b) `mlbench.2dnormals()`
+
+```{r, warning=FALSE}
+set.seed(123)
+twod_norm <- mlbench.2dnormals(100, 2)
+plot(twod_norm)
+```
+
+
+```{r, warning=FALSE}
+
+twod.x = twod_norm$x
+twod.y = twod_norm$classes
+
+# Linear 
+twod_linear_mod <- svm_select(twod.x, twod.y, "linear")
+plot(twod_linear_mod, data.frame(x = twod.x, class = as.factor(twod.y)))
+
+# Polynomial 
+twod_poly_mod <- svm_select(twod.x, twod.y, "polynomial", degree = degree.choice )
+plot(twod_poly_mod, data.frame(x = twod.x, class = as.factor(twod.y)))
+
+# Radial
+twod_radial_mod <- svm_select(twod.x, twod.y, "radial", gamma = gammas.choice)
+plot(twod_radial_mod, data.frame(x = twod.x, class = as.factor(twod.y)))
+
+```
+
+
+
+   c) `mlbench.xor()`
+
+```{r,warning=FALSE}
+set.seed(123)
+xor <- mlbench.xor(100, 2)
+plot(xor)
+```
+
+
+```{r warning=FALSE}
+xor.x = xor$x
+xor.y = xor$classes
+
+#linear kernel
+xor_linear_mod <- svm_select(xor.x, xor.y, "linear")
+plot(xor_linear_mod, data.frame(x = xor.x, class = as.factor(xor.y)))
+
+# polynomial kernel
+xor_poly_mod <- svm_select(xor.x, xor.y, "polynomial", degree = degree.choice)
+plot(xor_poly_mod, data.frame(x = xor.x, class = as.factor(xor.y)))
+
+# radial kernel
+xor_radial_mod <- svm_select(xor.x, xor.y, "radial", gamma = gammas.choice)
+plot(xor_radial_mod, data.frame(x = xor.x, class = as.factor(xor.y)))
+
+```
+
+3. Compare the decision boundary and hyperparameter values of your best two polynomial models and your worst two polynomial models (according to CV error) from part b) in the previous problem. What made these models good/bad? (3-5 sentences)
+
+```{r}
+
+tune_out_perf <- tune(svm, train.x = twod.x, train.y = twod.y, kernel = "polynomial", 
+                      ranges = list(gamma = gammas.choice, cost = c(.0001, .01, 1, 10, 100)), 
+                      degrees = degree.choice)$performances
+
+training_data <- data.frame(x = twod.x, class = as.factor(twod.y))
+
+# Select the four sets of parameters from the results of the cross validation
+
+best_params <- head(tune_out_perf[order(tune_out_perf$error), ], 2)
+worst_params <- tail( tune_out_perf[order(tune_out_perf$error), ], 2)
+
+# Best Model
+best_mod_poly <- svm(class~., data = training_data, kernel = "polynomial", 
+                   gamma = best_params$gamma[1],
+                   cost = best_params$cost[1],
+                   degrees = best_params$degrees[1])
+
+
+# Second best model
+best_mod_poly_2 <- svm(class~., data = training_data, kernel = "polynomial", 
+                   gamma = best_params$gamma[2],
+                   cost = best_params$cost[2],
+                   degrees = best_params$degrees[2])
+
+# Worst model
+worst_mod_poly <- svm(class~., data = training_data, kernel = "polynomial", 
+                   gamma = worst_params$gamma[2],
+                   cost = worst_params$cost[2],
+                   degrees = worst_params$degrees[2])
+
+# create the second worst model
+worst_mod_poly_2 <- svm(class~., data = training_data, kernel = "polynomial", 
+                   gamma = worst_params$gamma[1],
+                   cost = worst_params$cost[1],
+                   degrees = worst_params$degrees[1])
+
+# print out parameters and the plots
+best_params[1]
+plot(best_mod_poly, training_data)
+
+best_params[2]
+plot(best_mod_poly_2, training_data)
+
+worst_params[1]
+plot(worst_mod_poly_2, training_data)
+
+worst_params[2]
+plot(worst_mod_poly, training_data)
+
+```
+
+
+4. ISLR 9.7 Exercise
+
+
+```{r}
+set.seed(123)
+
+# Plot 100 observations
+twonorm <- mlbench.twonorm(100, 2)
+plot(twonorm)
+
+# Divide into training and test sets using an 80-20 split
+idx <- sample(1:nrow(twonorm$x), 20)
+twonorm_train.x <- twonorm$x[-idx,]
+twonorm_train.y <- twonorm$classes[-idx]
+
+twonorm_test.x <- twonorm$x[idx, ]
+twonorm_test.y <- twonorm$classes[idx]
+
+# Linear 
+linear_mod <- svm_select(twonorm_train.x, twonorm_train.y, "linear")
+plot(linear_mod, data.frame(x = twonorm_train.x, class = as.factor(twonorm_train.y)))
+
+# Polynomial 
+poly_mod <- svm_select(twonorm_train.x, twonorm_train.y, "polynomial", 
+                               degree = degree.choice)
+plot(poly_mod, data.frame(x = twonorm_train.x, class = as.factor(twonorm_train.y)))
+
+# Radial 
+radial_mod <- svm_select(twonorm_train.x, twonorm_train.y,  "radial", 
+                                 gamma = gammas.choice)
+plot(radial_mod, data.frame(x = twonorm_train.x, class = as.factor(twonorm_train.y)))
+```
+
+
+
+```{r}
+# Linear
+linear_preds <- predict(linear_mod, twonorm_test.x)
+linear_confusion <- table(linear_preds, twonorm_test.y)
+linear_error <- sum(linear_confusion[1,2], linear_confusion[2,1])/sum(linear_confusion)
+
+# Poly
+poly_preds <- predict(poly_mod, twonorm_test.x)
+poly_confusion <- table(poly_preds, twonorm_test.y)
+poly_error <- sum(poly_confusion[1,2], poly_confusion[2,1])/sum(poly_confusion)
+
+# Radial
+radial_preds <- predict(radial_mod, twonorm_test.x)
+radial_confusion <- table(radial_preds, twonorm_test.y)
+radial_error <- sum(radial_confusion[1,2], radial_confusion[2,1])/sum(radial_confusion)
+
+# Print out results
+
+linear_confusion
+poly_confusion
+radial_confusion
+
+paste("Linear Test Error:", linear_error)
+paste("Polynomial Test Error:", poly_error)
+paste("Radial Test error:", radial_error)
+```
+

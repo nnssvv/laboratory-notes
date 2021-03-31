@@ -1,0 +1,187 @@
+---
+title: "Lab exercises week 11"
+author: "Sian Brooke"
+date: "31 March 2021"
+output: html_document
+---
+
+
+## Final MY474 Class
+Our final class will be exercise based working in groups ~3. To end class today, I will ask a different group to present each part of the exercises. Consider commenting your code when coming up with solutions to make it easier to present later. 
+
+
+### Announcements
+1. My office hours are 14:30 to 17:00 on Thursday. I have moved them because Friday is a bank holiday and they are longer as I had to cancel last weeks office hours very short notice. My next office hours are in the 16th of April.
+2. When you go into breakout rooms I will trigger the course Feedback Surveys. If you could please complete these if you get a moment in class today it would be much appreciated.
+
+
+### Introduction
+This lab is about a few very important topics in the work flow of a data scientist: Dealing with missing values well, engineering features, and assessing feature importance.
+
+You are going to work on the following exercises in breakout rooms. There you can e.g. divide the exercises among the members of your group. An alternative approach is that one student shares their screen and types, while the group discusses the code together. While you are working on the exercises, we will also move around the breakout rooms to answer questions as they come up. Towards the end of the lab we will ask the teams whether some would like to present their findings to the group, however, there is of course no obligation to present.
+
+The dataset we are going to look at is a sample of housing data from California. One line/observation in this dataset is a block. The task is to build a model that predicts the variable "median_house_value" as well as possible. 
+
+__Exercise 1: Missing values__
+
+Some features in the training and test datasets have missing values. In research and work as a data scientist this is a common case. One option is to drop all rows with one or more NA values, however, this also gets rid of a lot of information from the other columns (which can be particularly problematic if the dataset is small to begin with). In this exercise we are trying to use all information in the data and deal with missing values well. 
+
+There are many approaches to impute missing values, with the simplest being to choose the column mean (continuous variable) or mode (categorical variable). More important than the imputation technique itself, however, is often to signal to the model that a value has been imputed at all. This is what we are going to study.
+
+a) Impute the missing values in the continuous features of training_X and test_X with their column mean from training_X. This assumes that new test data will come in at high frequency in later implementations of the model, and that it will not be possible to recompute the means including also the test data every time. In order to look at comparable settings during training and evaluation, we impute the missing values in training_X and test_X _only_ with the means from the training_X data. For missing values in the categorical variable, simply add a new factor level or character called "missing". This is a convenient way to deal with missing values for categoricals. Next, using the training data, cross validate a LASSO (note: using the function `lasso_model <- cv.glmnet(...)` does both in one - it chooses the best lambda via cross validation and can also be used to predict afterwards) or train a random forest. What is the RMSE that this model achieves on the test data?
+
+**HINT: Check that you have all levels of your categorical variables in both datasets when you expand the matrix. Think about how you can deal with data if you don't.**
+
+b) Now add one indicator columnn to both training_X and test_X for each _continuous_ variable with missing values. These indicator columns take a value of 1 if the value in a corresponding variable was imputed and zero otherwise. Conveniently, for the categorical variable our added label does this implicitly. Retrain your model with the new training_X matrix containing the indicators and predict with the new test_X matrix containing the indicators. What test RMSE do you find now?
+
+c) When do you think will adding indicator columns be most important? Hint: What are two broad ways in which values can be missing?
+
+
+```{r}
+library(glmnet)
+set.seed(1)
+
+# Read in the data sets.
+test.df <- read.csv("test_dataset.csv")
+train.df<- read.csv("training_datset.csv")
+
+test.df$X <- NULL
+train.df$X <- NULL
+
+# Function for (a) and (b)
+
+fill.column <- function(data, fill.from=train.df){
+  # Loop over cols by index
+  for (i in colnames(data)){
+    # Indicator if value replaced
+    data[[paste0(i,".na")]] <- ifelse(is.na(data[,i]), 1, 0)
+    # Continuous var replaced with mean, else "missing"
+    data[is.na(data[,i]), i] <- ifelse(is.numeric(data[,i]),
+                                       mean(fill.from[,i], na.rm = T),
+                                       "MISSING")
+  }
+  return(data)
+}
+
+rmse <- function(pred, actual){sqrt(apply((actual - pred)^2, 2, mean))}
+
+train.df <- fill.column(train.df)
+test.df <- fill.column(test.df)
+
+```
+
+``` {r}
+# Creates a design (or model) matrix, e.g., by expanding factors to a set of dummy variables
+x.matrix <- model.matrix(median_house_value~.-1, data = train.df[,1:10])
+test.matrix <- model.matrix(median_house_value~.-1, data = test.df[,1:10])
+
+y <- train.df$median_house_value
+
+# Test matrix is missing a level
+test.matrix <- cbind(test.matrix, ocean_proximityISLAND = rep(0, nrow(test.df)))
+
+
+# LASSO (Without indicators NA was replaced)
+cv.lasso <- cv.glmnet(x.matrix, y, alpha = 1)
+#plot(cv.lasso)
+
+# Best value of lambda (minimum mean cross-validated error)
+best.lambda <- cv.lasso$lambda.min
+
+# Fit a generalized linear model via Lasso.
+fit.lasso <- glmnet(x.matrix, y, alpha = 1)
+
+# Here the Lasso also chooses the best model with one variable
+# predict(fit.lasso, type = "coefficients")
+pred <- predict(fit.lasso, newx = test.matrix, s = best.lambda)
+
+# Root Mean Squared Error (Square root of MSE)
+print(paste("RSME:", round(rmse(pred, test.df$median_house_value),0)))
+
+```
+
+```{r}
+# (b) Add indicator column and run model again.
+
+x.matrix <- model.matrix(median_house_value~.-1, data = train.df)
+test.matrix <- model.matrix(median_house_value~.-1, data = test.df)
+test.matrix <- cbind(test.matrix, ocean_proximityISLAND = rep(0, nrow(test.df)))
+
+y <- train.df$median_house_value
+
+
+cv.lasso <- cv.glmnet(x.matrix, y, alpha = 1)
+best.lambda <- cv.lasso$lambda.min
+
+fit.lasso <- glmnet(x.matrix, y, alpha = 1)
+pred <- predict(fit.lasso, newx = test.matrix, s = best.lambda)
+
+print(paste("RSME:", round(rmse(pred, test.df$median_house_value), 0)))
+
+```
+__Exercise 2: Feature engineering__
+
+With your properly imputed matrices from 1 b), this exercise is about feature engineering. Try to think about transformations of features that you could add to training_X and test_X (or replace old columns with) that could improve predictions here. One option could e.g. be log transforms (what can log transforms in the X matrix sometimes help with?).
+
+Another approach to this is more agnostic. Add a range of transformations such as the example above but also e.g. squares and interactions (try e.g. `model.matrix( ~.^n, data = some_data)` which creates interactions or the function [step_interact](https://recipes.tidymodels.org/reference/step_interact.html)). After you have blown up the number of columns in the training_X (and test_X matrix in the same way), train your LASSO or random forest model on the training data. Do you subsequently find that it achieves lower RMSE on the test data than what you found in 1 b) without transformations? Or does adding the many nonlinear features here only seem to overfit and not improve predictions any further?
+
+```{r}
+# Log Transform some variables
+train.df.log <- train.df
+test.df.log <- test.df
+
+cols <- c("total_rooms", "total_bedrooms", "population", "households")
+
+train.df.log[paste("log",cols,sep="_")] <- log(train.df.log[cols])
+test.df.log[paste("log",cols,sep="_")] <- log(test.df.log[cols])
+
+train.df.log[cols] <- NULL
+test.df.log[cols] <- NULL
+
+x.matrix <- model.matrix(median_house_value~.-1, data = train.df.log)
+test.matrix <- model.matrix(median_house_value~.-1, data = test.df.log)
+test.matrix <- cbind(test.matrix, ocean_proximityISLAND = rep(0, nrow(test.df.log)))
+
+y <- train.df.log$median_house_value
+
+cv.lasso <- cv.glmnet(x.matrix, y, alpha = 1)
+best.lambda <- cv.lasso$lambda.min
+
+fit.lasso <- glmnet(x.matrix, y, alpha = 1)
+pred <- predict(fit.lasso, newx = test.matrix, s = best.lambda)
+
+print(paste("RSME:", round(rmse(pred, test.df.log$median_house_value), 0)))
+
+# Log transforms can be good if features in X which 
+# have large and positive values and strong outliers. 
+# The log transform pushes the values of the feature 
+# closer together and can make the prediction model 
+# based on this new X better because its predictions 
+# are now not  thrown off that by the outliers in the 
+# feature. Whether this helps to lower the RMSE depends 
+# on the specific dataset though.
+
+```
+
+
+__Optional exercise 3: Permutation importance__
+
+For this optional exercise, use your data from 1 b). The goal is to compute permutation variable importance.
+
+1. First use your trained model from 1 b) and store the RMSE it achieved on the test set as test_RMSE.
+2. Now shuffle the first feature in the test_X matrix and repeat the prediction (but do not re-train the model). Afterwards compute the RMSE resulting from this test_X with the permuted column and divide it by the original test_RMSE. Then store this value in e.g. a dataframe as the variable importance value for feature 1.
+3. Restore the original order of observations in column 1, and continue with shuffling column 2. And so on.
+
+Which variable do you find has the highest importance value?
+
+
+```{r}
+
+```
+
+
+
+
+References
+
+  - Dataset is a sample from https://www.kaggle.com/camnugent/california-housing-prices with added NAs
