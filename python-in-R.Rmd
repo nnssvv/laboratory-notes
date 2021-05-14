@@ -1,0 +1,92 @@
+---
+title: "Running Python in R Markdown"
+author: "Sian Brooke"
+date: "23/02/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Installing and Locating Python
+
+Before we start, you need to make sure you have python installed. You can either (1) [Install python directly](https://www.python.org/downloads/) or (2) [Install a python and R distribution like Anaconda](https://www.anaconda.com/products/individual).
+
+You can locate python on your computer by using the code below in the command line or terminal. You will need to know where python is located on your machine in order to load it into your R file.
+
+```{bash}
+## Locate python
+#   Mac (Unix):
+which python
+# Windows:
+where python
+```
+
+## R Interface to Python
+
+The (reticulate package)[https://rstudio.github.io/reticulate/] provides a comprehensive set of tools for interoperability between Python and R. The package includes facilities for calling Python from R in a variety of ways including R Markdown, sourcing Python scripts, importing Python modules, and using Python interactively within an R session. It also allows for translation between R and Python objects (for example, between R and Pandas data frames, or between R matrices and NumPy arrays) and flexible binding to different versions of Python including virtual environments and Conda environments. The code below shows you how to ensure that R is upto date and that Rtools is successfully installed. 
+
+```{r}
+## DEPENDENCIES
+
+## To Update R:
+#install.packages("installr")
+#library(installr)
+#updateR()
+
+## Install Dependencies:
+#install.packages("Rtools")
+
+# WINDOWS NOTE: If this does not work follow download Rtools from this link.
+#   https://cran.r-project.org/bin/windows/Rtools/
+
+
+## Run:
+# writeLines('PATH="${RTOOLS40_HOME}\\usr\\bin;${PATH}"', con = "~/.Renviron")
+
+## Restart R:
+# Run:
+#Sys.which("make")
+
+```
+Reticulate embeds a Python session within your R session, enabling seamless, high-performance interoperability. If you are an R developer that uses Python for some of your work or a member of data science team that uses both languages, reticulate can dramatically streamline your workflow. The code will install the reticulate package,
+
+``` {r}
+## Install Reticulate
+#install.packages("reticulate")
+
+## Load Package and Python
+library(reticulate)
+#use_python("/usr/local/bin/python3")
+use_python("/Users/BrookeSJ/anaconda3/python")
+
+```
+
+In  the terminal/command line, you need to install gensim and pandas for this weeks Computer Lab. You can do this with pip or with anaconda, depending on how you have set up python or if you are on a Mac or Windows machine.
+
+```{r}
+## With pip:
+# sudo pip3 install gensim
+# sudo pip3 install pandas
+
+## With conda:
+# conda install gensim
+# conda install pandas
+```
+
+We can install packages using the py_install() function to install one or more Python packages. The packages will be by default be installed within a virtualenv or Conda environment named “r-reticulate”. If we have installed Anaconda, we can use conda (an open source package management system) to create a custom virtual environment as well as install packages.
+```{r}
+# Install packages
+py_install("pandas")
+py_install("gensim")
+
+# You can look at your set up using: 
+py_config()
+
+```
+We can check the packages have been installed by importing them into a python cell. Note that we put "python" in the {} at the start of the chunk.
+```{python}
+import pandas as pd
+import gensim
+```
